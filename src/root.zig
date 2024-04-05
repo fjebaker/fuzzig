@@ -7,25 +7,48 @@ fn firstMatch(
     allocator: std.mem.Allocator,
     hackstack: []const T,
     needle: []const T,
-) ![]const usize {
+) !?[]const usize {
+    if (needle.len == 0) {
+        return &.{};
+    }
+    if (needle.len > hackstack.len) {
+        return null;
+    }
 
     // allocate maximum
     var matches = try std.ArrayList(usize).initCapacity(allocator, needle.len);
     defer matches.deinit();
 
     var index: usize = 0;
-    for (0.., hackstack) |i, t| {
-        if (index >= needle.len) break;
-        const p = needle[index];
+    for (0.., hackstack) |i, h| {
+        const n = needle[index];
 
-        if (t == p) {
+        if (h == n) {
             matches.appendAssumeCapacity(i);
             index += 1;
+            if (index >= needle.len) break;
         }
-    }
+    } else return null;
 
     matches.shrinkAndFree(matches.items.len);
     return try matches.toOwnedSlice();
+}
+
+fn testFirstMatch(
+    haystack: []const u8,
+    needle: []const u8,
+    comptime expected: []const usize,
+) !void {
+    const inds = try firstMatch(u8, std.testing.allocator, haystack, needle);
+    defer if (inds) |x| std.testing.allocator.free(x);
+
+    try std.testing.expectEqualSlices(usize, expected, inds.?);
+}
+
+test "firstMatch" {
+    try testFirstMatch("axbycz", "xyz", &.{ 1, 3, 5 });
+    try testFirstMatch("axbycz", "abc", &.{ 0, 2, 4 });
+    try testFirstMatch("", "", &.{});
 }
 
 // Matrix Filling: for two sequences a1a2a3..., b1b2b3... we have a reward
@@ -140,7 +163,7 @@ const Algorithm = struct {
         score_gap_start: UT = -3,
         score_gap_extension: UT = -1,
         // negative_infinity: UT = std.math.minInt(i16),
-        negative_infinity: UT = 0,
+        negative_infinity: UT = -1,
     };
 
     m: Matrix,
@@ -178,13 +201,14 @@ const Algorithm = struct {
         };
     }
 
-    pub fn score(self: *Algorithm) !UT {
-        const first_match_indices = try firstMatch(
+    pub fn score(self: *Algorithm) !?UT {
+        if (self.needle.len == 0) return 0;
+        const first_match_indices = (try firstMatch(
             u8,
             self.allocator,
             self.hackstack,
             self.needle,
-        );
+        )) orelse return null;
         defer self.allocator.free(first_match_indices);
         self.reset(first_match_indices);
         try self.populateMatrices(first_match_indices);
@@ -244,11 +268,16 @@ const Algorithm = struct {
     }
 
     fn reset(self: *Algorithm, first_match_indices: []const usize) void {
+        // for debugging
+        @memset(self.m.matrix, 0);
+        @memset(self.x.matrix, 0);
+
         // set the first row and column to zero
         @memset(self.m.getRow(0), self.opts.negative_infinity);
         @memset(self.x.getRow(0), self.opts.negative_infinity);
 
         for (1..self.m.rows) |i| {
+            if (first_match_indices.len <= i - 1) break;
             const j = first_match_indices[i - 1];
             self.m.set(i, j, self.opts.negative_infinity);
             self.x.set(i, j, self.opts.negative_infinity);
@@ -261,50 +290,110 @@ const Algorithm = struct {
     }
 
     fn populateMatrices(self: *Algorithm, first_match_indices: []const usize) !void {
-        for (0.., self.needle) |i, n| {
+        for (1.., self.needle) |i, n| {
 
             // how many characters of the haystack do we skip
-            const skip = first_match_indices[i];
-            for (skip.., self.hackstack[skip..]) |j, h| {
-                const prev_match_score = self.m.get(i, j);
-                const prev_skip_score = self.x.get(i, j);
-
-                std.debug.print(
-                    "{d},{d}: prev {d} skip {d}\n",
-                    .{ i, j, prev_match_score, prev_skip_score },
-                );
+            const skip = first_match_indices[i - 1];
+            for (skip + 1.., self.hackstack[skip..]) |j, h| {
+                const prev_match = self.m.get(i - 1, j - 1);
+                const prev_skip = self.x.get(i - 1, j - 1);
 
                 // start by updating the M matrix
-                if (self.scoreFunc(n, h)) |current_score| {
-                    if (prev_match_score >= prev_skip_score) {
-                        const total_score = current_score + prev_match_score;
-                        self.m.set(i + 1, j + 1, total_score);
+
+                // compute score
+                if (self.scoreFunc(n, h)) |current| {
+                    const score_match = prev_match;
+                    const score_skip = prev_skip;
+                    if (score_match >= score_skip) {
+                        const total = current + score_match;
+                        self.m.set(i, j, total);
+                        self.skip.set(i, j, false);
                     } else {
-                        const total_score = current_score + prev_skip_score;
-                        self.m.set(i + 1, j + 1, total_score);
+                        const total = current + score_skip;
+                        self.m.set(i, j, total);
+                        self.skip.set(i, j, true);
                     }
                 } else {
-                    self.m.set(i + 1, j + 1, self.opts.negative_infinity);
+                    self.m.set(i, j, self.opts.negative_infinity);
+                    self.skip.set(i, j, true);
                 }
 
                 // then update the X matrix
-                const x_start_score =
+
+                // cost of starting a new gap
+                const x_start =
                     self.opts.score_gap_start +
                     self.opts.score_gap_extension +
-                    prev_match_score;
-                const x_extend_score =
-                    self.opts.score_gap_extension +
-                    prev_match_score;
+                    self.m.get(i - 1, j); // M[i-1,j]
 
-                if (x_start_score >= x_extend_score) {
-                    self.x.set(i + 1, j + 1, x_start_score);
+                // cost of extending
+                const x_extend =
+                    self.opts.score_gap_extension +
+                    self.x.get(i - 1, j); // X[i-1,j]
+
+                if (x_start >= x_extend) {
+                    self.x.set(i, j, x_start);
+                    self.skip.set(i, j, false);
                 } else {
-                    self.x.set(i + 1, j + 1, x_extend_score);
+                    self.x.set(i, j, x_extend);
+                    self.skip.set(i, j, true);
                 }
             }
         }
     }
+
+    fn debugPrint(self: *const Algorithm, writer: anytype) !void {
+        const el_width = b: {
+            var max_digits: usize = 1;
+            for (self.m.matrix) |i| {
+                max_digits = @max(digitCount(i), max_digits);
+            }
+            break :b max_digits + 2;
+        };
+
+        // padding
+        try writer.writeByteNTimes(' ', el_width + 3);
+
+        // upper right corner
+        try writer.writeByteNTimes(' ', el_width);
+        for (self.hackstack) |h| {
+            try writer.print("'{c}'", .{h});
+            try writer.writeByteNTimes(' ', el_width - 2);
+        }
+
+        try writer.writeByte('\n');
+        try writer.writeByte('\n');
+
+        try writer.writeByteNTimes(' ', 4);
+        for (self.m.getRow(0)) |el| {
+            const width = digitCount(el);
+            try writer.writeByteNTimes(' ', el_width - width + 1);
+            try writer.print("{d}", .{el});
+        }
+
+        try writer.writeByte('\n');
+        for (self.needle, 1..) |n, row| {
+            try writer.print("'{c}'", .{n});
+            try writer.writeByteNTimes(' ', 1);
+
+            for (self.m.getRow(row)) |el| {
+                const width = digitCount(el);
+                try writer.writeByteNTimes(' ', el_width - width + 1);
+                try writer.print("{d}", .{el});
+            }
+
+            try writer.writeByte('\n');
+        }
+    }
 };
+
+fn digitCount(v: anytype) usize {
+    const abs: u32 = @intCast(@abs(v));
+    if (abs == 0) return 1;
+    const width: usize = @intCast(std.math.log10_int(abs));
+    if (v < 0) return width + 2;
+    return width + 1;
+}
 
 fn doTest(hackstack: []const u8, needle: []const u8) !void {
     var alg = try Algorithm.init(
@@ -316,20 +405,40 @@ fn doTest(hackstack: []const u8, needle: []const u8) !void {
     defer alg.deinit();
 
     const s = try alg.score();
-    std.debug.print("SCORE : {d}\n", .{s});
+
+    const stderr = std.io.getStdErr().writer();
+    try alg.debugPrint(stderr);
+
+    std.debug.print("SCORE : {d}\n", .{s orelse -1});
 }
 
 test "algorithm test" {
     try doTest(
-        "hello world",
-        "wrld",
+        "ab",
+        "ab",
     );
     try doTest(
-        "hello world",
-        "world",
+        "aoo_boo",
+        "ab",
     );
     try doTest(
-        "hello world",
-        "hello world",
+        "acb",
+        "ab",
     );
+    // try doTest(
+    //     "hello world",
+    //     "wrld",
+    // );
+    // try doTest(
+    //     "hello world",
+    //     "erld",
+    // );
+    try doTest(
+        "hello",
+        "heoll",
+    );
+    // try doTest(
+    //     "hello world",
+    //     "hello world",
+    // );
 }
