@@ -49,7 +49,7 @@ const MatrixT = structures.MatrixT;
 //     X[i,j] = max { gap_ext + X[i,j-1]
 //                  { gap_start + gap_ext + Y[i,j-1]
 //
-// We no longer require the Y matrix, and the algorithm is now O(mn).
+// The algorithm is now O(mn).
 
 pub fn Options(comptime ScoreT: type) type {
     return struct {
@@ -60,12 +60,12 @@ pub fn Options(comptime ScoreT: type) type {
         default_score: ScoreT = 0,
 
         // bonuses
+        bonus_break: ScoreT = 5,
+        bonus_camel: ScoreT = 2,
+        bonus_consecutive: ScoreT = 4,
         bonus_first_character_multiplier: ScoreT = 2,
         bonus_head: ScoreT = 8,
-        bonus_camel: ScoreT = 2,
-        bonus_break: ScoreT = 5,
         bonus_tail: ScoreT = 0,
-        bonus_consecutive: ScoreT = 4,
     };
 }
 
@@ -150,12 +150,6 @@ pub fn Algorithm(
 
             const rows = needle.len;
             const cols = haystack.len;
-            std.debug.print("rows {d}/{d} cols {d}/{d}\n", .{
-                rows,
-                self.m.rows,
-                cols,
-                self.m.cols,
-            });
 
             std.debug.assert(rows <= self.m.rows);
             std.debug.assert(cols <= self.m.cols);
@@ -169,8 +163,6 @@ pub fn Algorithm(
 
             self.reset(rows, first_match_indices);
             self.determineBonuses(haystack);
-
-            std.debug.print("BONUS: {any}\n", .{self.role_bonus});
 
             try self.populateMatrices(haystack, needle, first_match_indices);
             const col_max = self.findMaximalElement(first_match_indices, needle.len);
@@ -219,6 +211,7 @@ pub fn Algorithm(
             // TODO: remove, this is for debugging
             @memset(self.m.matrix, 0);
             @memset(self.x.matrix, 0);
+            @memset(self.skip.matrix, true);
 
             // set the first row and column to zero
             @memset(self.m.getRow(0), opts.default_score);
@@ -268,30 +261,36 @@ pub fn Algorithm(
                     // compute score
                     if (scoreFunc(n, h)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
+
+                        // role bonus for current character
                         const role_bonus = self.role_bonus[j];
 
-                        const consecutive_bonus = @max(
+                        const prev_matched = !self.skip.get(i - 1, j - 1);
+                        const consecutive_bonus = if (prev_matched)
+                            opts.bonus_consecutive
+                        else
+                            0;
+
+                        const current_bonus = @max(
                             prev_bonus,
-                            @max(role_bonus, opts.bonus_consecutive),
+                            @max(role_bonus, consecutive_bonus),
                         );
 
-                        self.bonus_buffer[j - 1] = consecutive_bonus;
+                        self.bonus_buffer[j - 1] = current_bonus;
 
-                        const score_match = prev_score_match + consecutive_bonus;
-                        const score_skip = prev_score_skip + role_bonus;
+                        const score_match = prev_score_match + current_bonus + current;
+                        const score_skip = prev_score_skip + role_bonus + current;
 
                         if (score_match >= score_skip) {
-                            const total = current + score_match;
-                            self.m.set(i, j, total);
-                            self.skip.set(i, j, false);
+                            self.m.set(i, j, score_match);
+                            self.skip.set(i, j - 1, false);
                         } else {
-                            const total = current + score_skip;
-                            self.m.set(i, j, total);
-                            self.skip.set(i, j, true);
+                            self.m.set(i, j, score_skip);
+                            self.skip.set(i, j - 1, true);
                         }
                     } else {
                         self.m.set(i, j, opts.default_score);
-                        self.skip.set(i, j, true);
+                        self.skip.set(i, j - 1, true);
                         self.bonus_buffer[j] = 0;
                     }
 
@@ -310,10 +309,10 @@ pub fn Algorithm(
 
                     if (x_start >= x_extend) {
                         self.x.set(i, j, x_start);
-                        self.skip.set(i, j, false);
+                        self.skip.set(i, j - 1, false);
                     } else {
                         self.x.set(i, j, x_extend);
-                        self.skip.set(i, j, true);
+                        self.skip.set(i, j - 1, true);
                     }
                 }
             }
@@ -330,7 +329,7 @@ pub fn Algorithm(
                 for (self.m.matrix) |i| {
                     max_digits = @max(utils.digitCount(i), max_digits);
                 }
-                break :bonus max_digits + 2;
+                break :bonus max_digits + 3;
             };
 
             // padding
@@ -346,10 +345,10 @@ pub fn Algorithm(
             try writer.writeByteNTimes('\n', 2);
 
             try writer.writeByteNTimes(' ', 4);
-            for (self.m.getRow(0)) |el| {
+            for (self.m.getRow(0), self.skip.getRow(0)) |el, skip| {
                 const width = utils.digitCount(el);
-                try writer.writeByteNTimes(' ', el_width - width + 1);
-                try writer.print("{d}", .{el});
+                try writer.writeByteNTimes(' ', el_width - width);
+                try writer.print("{d}{c}", .{ el, if (skip) @as(u8, '-') else @as(u8, 'm') });
             }
 
             try writer.writeByte('\n');
@@ -357,10 +356,10 @@ pub fn Algorithm(
                 try writer.print("'{c}'", .{n});
                 try writer.writeByteNTimes(' ', 1);
 
-                for (self.m.getRow(row)) |el| {
+                for (self.m.getRow(row), self.skip.getRow(row)) |el, skip| {
                     const width = utils.digitCount(el);
-                    try writer.writeByteNTimes(' ', el_width - width + 1);
-                    try writer.print("{d}", .{el});
+                    try writer.writeByteNTimes(' ', el_width - width);
+                    try writer.print("{d}{c}", .{ el, if (skip) @as(u8, '-') else @as(u8, 'm') });
                 }
 
                 try writer.writeByte('\n');
@@ -380,11 +379,11 @@ fn doTest(haystack: []const u8, needle: []const u8) !void {
     defer alg.deinit();
 
     const s = alg.score(haystack, needle);
+    _ = s;
 
-    const stderr = std.io.getStdErr().writer();
-    try alg.debugPrint(stderr, haystack, needle);
-
-    std.debug.print("SCORE : {d}\n", .{s orelse -1});
+    // const stderr = std.io.getStdErr().writer();
+    // try alg.debugPrint(stderr, haystack, needle);
+    // std.debug.print("SCORE : {d}\n", .{s orelse -1});
 }
 
 fn doTestScore(haystack: []const u8, needle: []const u8, comptime score: i32) !void {
@@ -397,56 +396,78 @@ fn doTestScore(haystack: []const u8, needle: []const u8, comptime score: i32) !v
 
     const s = alg.score(haystack, needle);
 
-    const stderr = std.io.getStdErr().writer();
-    try alg.debugPrint(stderr, haystack, needle);
+    // const stderr = std.io.getStdErr().writer();
+    // try alg.debugPrint(stderr, haystack, needle);
+    // std.debug.print("SCORE : {d}\n", .{s orelse -1});
 
-    std.debug.print("SCORE : {d}\n", .{s orelse -1});
     try std.testing.expectEqual(score, s.?);
 }
 
 test "algorithm test" {
     const o = Options(i32){};
-    try doTestScore("ab", "ab", o.score_match * o.bonus_first_character_multiplier +
-        o.score_match + o.bonus_consecutive);
-    try doTest(
-        "aoo_boo",
-        "ab",
-    );
-    try doTest(
-        "acb",
-        "ab",
-    );
-    try doTest(
-        "hello world",
-        "orld",
-    );
-    try doTest(
-        "hello world",
-        "wrld",
-    );
-    try doTestScore("foBarbaz1", "obz", o.score_match * 3 +
+    try doTestScore("ab", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    try doTestScore("xab", "ab", o.score_match * 2 +
+        o.bonus_consecutive);
+
+    try doTestScore("xabbaababab", "aba", o.score_match * 3 +
+        o.bonus_consecutive * 2);
+
+    try doTestScore("aoo_boo", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.score_gap_start + o.score_gap_extension * 3 +
+        o.bonus_break);
+
+    try doTestScore("acb", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.score_gap_start + o.score_gap_extension);
+
+    try doTestScore("hello world", "orld", o.score_match * 4 +
+        o.bonus_consecutive * 3);
+
+    try doTestScore("hello world", "wrld", o.score_match * 4 +
+        o.bonus_consecutive * 2 +
+        o.bonus_head +
+        o.score_gap_start + o.score_gap_extension * 1);
+
+    try doTestScore("hello woorld", "wrld", o.score_match * 4 +
+        o.bonus_consecutive * 2 +
+        o.bonus_head +
+        o.score_gap_start + o.score_gap_extension * 2);
+
+    try doTestScore("aaaaaaaaaaaaaaab", "b", o.score_match);
+    try doTestScore("acaaaaaaaaaaaaab", "cb", o.score_match * 2 +
+        o.score_gap_start + o.score_gap_extension * 13);
+
+    try doTestScore("focarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
-        o.score_gap_extension * 2);
+        o.score_gap_extension * 4);
+
     try doTestScore("fooBarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
-        o.score_gap_extension * 2);
-    try doTestScore("fooBarbaz1", "fobz", o.score_match * o.bonus_first_character_multiplier +
-        o.score_match * 3 +
+        o.score_gap_extension * 4);
+
+    try doTestScore("fooBarbaz1", "fobz", o.score_match * 4 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive +
         o.score_gap_start * 2 +
+        o.score_gap_extension * 5);
+
+    try doTestScore("foBarbaz1", "fobz", o.score_match * 4 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive +
+        o.score_gap_start * 2 +
+        o.score_gap_extension * 4);
+
+    try doTestScore("fooBarbaz1", "obz", o.score_match * 3 +
+        o.score_gap_start * 2 +
+        o.score_gap_extension * 4);
+
+    try doTestScore("xhell o", "helo", o.score_match * 4 +
+        o.bonus_break +
+        o.bonus_consecutive * 3 +
+        o.score_gap_start * 1 +
         o.score_gap_extension * 3);
-    try doTestScore("foBarbaz1", "fobz", o.score_match * o.bonus_first_character_multiplier +
-        o.score_match * 3 +
-        o.score_gap_start * 2 +
-        o.score_gap_extension * 2);
-    try doTestScore("fooBarbaz1", "obz", o.score_match * 3 +
-        o.score_gap_start * 2 +
-        o.score_gap_extension * 2);
-    try doTest(
-        "foBarbaz1",
-        "obz",
-    );
-    // try doTest(
-    //     "hello world",
-    //     "hello world",
-    // );
 }
