@@ -1,56 +1,5 @@
 const std = @import("std");
 
-/// Computes a simple equality check, recording the successive indices of hackstack
-/// that match successive characters in needle.
-fn firstMatch(
-    comptime T: type,
-    allocator: std.mem.Allocator,
-    hackstack: []const T,
-    needle: []const T,
-) !?[]const usize {
-    if (needle.len == 0) {
-        return &.{};
-    }
-    if (needle.len > hackstack.len) {
-        return null;
-    }
-
-    // allocate maximum
-    var matches = try std.ArrayList(usize).initCapacity(allocator, needle.len);
-    defer matches.deinit();
-
-    var index: usize = 0;
-    for (0.., hackstack) |i, h| {
-        const n = needle[index];
-
-        if (h == n) {
-            matches.appendAssumeCapacity(i);
-            index += 1;
-            if (index >= needle.len) break;
-        }
-    } else return null;
-
-    matches.shrinkAndFree(matches.items.len);
-    return try matches.toOwnedSlice();
-}
-
-fn testFirstMatch(
-    haystack: []const u8,
-    needle: []const u8,
-    comptime expected: []const usize,
-) !void {
-    const inds = try firstMatch(u8, std.testing.allocator, haystack, needle);
-    defer if (inds) |x| std.testing.allocator.free(x);
-
-    try std.testing.expectEqualSlices(usize, expected, inds.?);
-}
-
-test "firstMatch" {
-    try testFirstMatch("axbycz", "xyz", &.{ 1, 3, 5 });
-    try testFirstMatch("axbycz", "abc", &.{ 0, 2, 4 });
-    try testFirstMatch("", "", &.{});
-}
-
 // Matrix Filling: for two sequences a1a2a3..., b1b2b3... we have a reward
 // function
 //
@@ -96,6 +45,117 @@ test "firstMatch" {
 //                  { gap_start + gap_ext + Y[i,j-1]
 //
 // We no longer require the Y matrix, and the algorithm is now O(mn).
+
+const CharacterType = enum {
+    Empty,
+    Upper,
+    Lower,
+    Number,
+    HardSeperator,
+    SoftSeperator,
+
+    pub fn fromChar(c: u8) CharacterType {
+        return switch (c) {
+            'a'...'z' => .Lower,
+            'A'...'Z' => .Upper,
+            '0'...'9' => .Number,
+            ' ', '\\', '/', '|', '(', ')', '[', ']', '{', '}' => .HardSeperator,
+            '!', '*'...'.', ':'...'@', '^'...'`', '~' => .SoftSeperator,
+            0 => .Empty,
+            else => .Lower,
+        };
+    }
+
+    const Role = enum {
+        Head,
+        Break,
+        Camel,
+        Tail,
+    };
+
+    pub fn compare(s: CharacterType, o: CharacterType) Role {
+        return switch (s) {
+            .Empty, .HardSeperator => .Head,
+            .SoftSeperator => .Break,
+            .Lower => if (o == .Upper) .Camel else .Tail,
+            .Number => if (o == .Upper) .Camel else .Tail,
+            else => .Tail,
+        };
+    }
+};
+
+/// Computes a simple equality check, recording the successive indices of hackstack
+/// that match successive characters in needle.
+fn firstMatches(
+    comptime T: type,
+    allocator: std.mem.Allocator,
+    hackstack: []const T,
+    needle: []const T,
+) !?[]const usize {
+    if (needle.len == 0) {
+        return &.{};
+    }
+    if (needle.len > hackstack.len) {
+        return null;
+    }
+
+    // allocate maximum
+    var matches = try std.ArrayList(usize).initCapacity(allocator, needle.len);
+    defer matches.deinit();
+
+    var index: usize = 0;
+    for (0.., hackstack) |i, h| {
+        const n = needle[index];
+
+        if (h == n) {
+            matches.appendAssumeCapacity(i);
+            index += 1;
+            if (index >= needle.len) break;
+        }
+    } else return null;
+
+    matches.shrinkAndFree(matches.items.len);
+    return try matches.toOwnedSlice();
+}
+
+fn testFirstMatch(
+    haystack: []const u8,
+    needle: []const u8,
+    comptime expected: []const usize,
+) !void {
+    const inds = try firstMatches(u8, std.testing.allocator, haystack, needle);
+    defer if (inds) |x| std.testing.allocator.free(x);
+
+    try std.testing.expectEqualSlices(usize, expected, inds.?);
+}
+
+test "firstMatches" {
+    try testFirstMatch("axbycz", "xyz", &.{ 1, 3, 5 });
+    try testFirstMatch("axbycz", "abc", &.{ 0, 2, 4 });
+    try testFirstMatch("", "", &.{});
+}
+
+fn doSkip(comptime T: type, slice: []const T, n: T) ?usize {
+    const index = std.mem.indexOfScalar(T, slice, n) orelse
+        return null;
+    // TODO: additional uppercasing things
+    return index;
+}
+
+fn findFirstAsciiIndex(comptime T: type, haystack: []const T, needle: []const T) ?usize {
+    var first_index: usize = 0;
+    var index: usize = 0;
+    for (0.., needle) |i, n| {
+        index = index + doSkip(T, haystack[index..], n) orelse
+            return null;
+        if (i == 0 and index > 0) {
+            // translate into an index in the matrix
+            first_index = index - 1;
+        }
+        index = index + 1;
+    }
+    return first_index;
+}
 
 /// Column major matrix type.
 fn MatrixT(comptime T: type) type {
@@ -162,13 +222,24 @@ const Algorithm = struct {
         score_match: UT = 16,
         score_gap_start: UT = -3,
         score_gap_extension: UT = -1,
+
         // negative_infinity: UT = std.math.minInt(i16),
         negative_infinity: UT = -1,
+
+        // bonuses
+        bonus_first_character_multiplier: UT = 2,
+        bonus_head: UT = 8,
+        bonus_camel: UT = 2,
+        bonus_break: UT = 5,
+        bonus_tail: UT = 0,
+        bonus_consecutive: UT = 4,
     };
 
     m: Matrix,
     x: Matrix,
+    b: Matrix,
     skip: MatrixT(bool),
+    bonus: []UT,
     hackstack: []const u8,
     needle: []const u8,
     allocator: std.mem.Allocator,
@@ -187,13 +258,20 @@ const Algorithm = struct {
         errdefer m.deinit();
         var x = try Matrix.init(allocator, rows, cols);
         errdefer x.deinit();
+        var b = try Matrix.init(allocator, rows, cols);
+        errdefer b.deinit();
         var skip = try MatrixT(bool).init(allocator, rows, cols);
         errdefer skip.deinit();
+
+        const bonus = try allocator.alloc(UT, cols);
+        errdefer allocator.free(bonus);
 
         return .{
             .m = m,
             .x = x,
+            .b = b,
             .skip = skip,
+            .bonus = bonus,
             .hackstack = hackstack,
             .needle = needle,
             .allocator = allocator,
@@ -203,16 +281,20 @@ const Algorithm = struct {
 
     pub fn score(self: *Algorithm) !?UT {
         if (self.needle.len == 0) return 0;
-        const first_match_indices = (try firstMatch(
+        const first_match_indices = (try firstMatches(
             u8,
             self.allocator,
             self.hackstack,
             self.needle,
         )) orelse return null;
         defer self.allocator.free(first_match_indices);
-        self.reset(first_match_indices);
-        try self.populateMatrices(first_match_indices);
 
+        self.reset(first_match_indices);
+        self.determineBonuses();
+
+        std.debug.print("BONUS: {any}\n", .{self.bonus});
+
+        try self.populateMatrices(first_match_indices);
         const col_max = self.findMaximalElement(first_match_indices);
 
         // self.traceback(col_max, first_match_indices);
@@ -224,9 +306,37 @@ const Algorithm = struct {
     pub fn deinit(self: *Algorithm) void {
         self.m.deinit();
         self.x.deinit();
+        self.b.deinit();
         self.skip.deinit();
+        self.allocator.free(self.bonus);
         self.* = undefined;
     }
+
+    fn determineBonuses(self: *Algorithm) void {
+        var prev: u8 = 0;
+        for (1.., self.hackstack) |i, h| {
+            self.bonus[i] = self.bonusFor(prev, h);
+            prev = h;
+        }
+
+        if (self.bonus.len > 1) {
+            self.bonus[1] = self.bonus[1] * self.opts.bonus_first_character_multiplier;
+        }
+    }
+
+    fn bonusFor(self: *const Algorithm, prev: u8, curr: u8) UT {
+        const p = CharacterType.fromChar(prev);
+        const c = CharacterType.fromChar(curr);
+
+        return switch (p.compare(c)) {
+            .Head => self.opts.bonus_head,
+            .Camel => self.opts.bonus_camel,
+            .Break => self.opts.bonus_break,
+            .Tail => self.opts.bonus_tail,
+        };
+    }
+
+    // OLD
 
     fn findMaximalElement(
         self: *const Algorithm,
@@ -282,6 +392,9 @@ const Algorithm = struct {
             self.m.set(i, j, self.opts.negative_infinity);
             self.x.set(i, j, self.opts.negative_infinity);
         }
+
+        @memset(self.b.matrix, 0);
+        @memset(self.bonus, 0);
     }
 
     fn scoreFunc(self: *const Algorithm, n: u8, h: u8) ?UT {
@@ -295,15 +408,26 @@ const Algorithm = struct {
             // how many characters of the haystack do we skip
             const skip = first_match_indices[i - 1];
             for (skip + 1.., self.hackstack[skip..]) |j, h| {
-                const prev_match = self.m.get(i - 1, j - 1);
-                const prev_skip = self.x.get(i - 1, j - 1);
+                const prev_score_match = self.m.get(i - 1, j - 1);
+                const prev_score_skip = self.x.get(i - 1, j - 1);
 
                 // start by updating the M matrix
 
                 // compute score
                 if (self.scoreFunc(n, h)) |current| {
-                    const score_match = prev_match;
-                    const score_skip = prev_skip;
+                    const prev_bonus = self.b.get(i, j - 1);
+                    const role_bonus = self.bonus[j];
+
+                    const consecutive_bonus = @max(
+                        prev_bonus,
+                        @max(role_bonus, self.opts.bonus_consecutive),
+                    );
+
+                    self.b.set(i, j - 1, consecutive_bonus);
+
+                    const score_match = prev_score_match + consecutive_bonus;
+                    const score_skip = prev_score_skip + role_bonus;
+
                     if (score_match >= score_skip) {
                         const total = current + score_match;
                         self.m.set(i, j, total);
@@ -316,6 +440,7 @@ const Algorithm = struct {
                 } else {
                     self.m.set(i, j, self.opts.negative_infinity);
                     self.skip.set(i, j, true);
+                    self.b.set(i, j, 0);
                 }
 
                 // then update the X matrix
@@ -324,12 +449,12 @@ const Algorithm = struct {
                 const x_start =
                     self.opts.score_gap_start +
                     self.opts.score_gap_extension +
-                    self.m.get(i - 1, j); // M[i-1,j]
+                    self.m.get(i, j - 1); // M[i,j-1]
 
                 // cost of extending
                 const x_extend =
                     self.opts.score_gap_extension +
-                    self.x.get(i - 1, j); // X[i-1,j]
+                    self.x.get(i, j - 1); // X[i,j-1]
 
                 if (x_start >= x_extend) {
                     self.x.set(i, j, x_start);
@@ -412,7 +537,26 @@ fn doTest(hackstack: []const u8, needle: []const u8) !void {
     std.debug.print("SCORE : {d}\n", .{s orelse -1});
 }
 
+fn doTestScore(hackstack: []const u8, needle: []const u8, comptime score: i32) !void {
+    var alg = try Algorithm.init(
+        std.testing.allocator,
+        hackstack,
+        needle,
+        .{},
+    );
+    defer alg.deinit();
+
+    const s = try alg.score();
+
+    const stderr = std.io.getStdErr().writer();
+    try alg.debugPrint(stderr);
+
+    std.debug.print("SCORE : {d}\n", .{s orelse -1});
+    try std.testing.expectEqual(score, s.?);
+}
+
 test "algorithm test" {
+    const o = Algorithm.Options{};
     try doTest(
         "ab",
         "ab",
@@ -425,17 +569,28 @@ test "algorithm test" {
         "acb",
         "ab",
     );
-    // try doTest(
-    //     "hello world",
-    //     "wrld",
-    // );
-    // try doTest(
-    //     "hello world",
-    //     "erld",
-    // );
     try doTest(
-        "hello",
-        "heoll",
+        "hello world",
+        "orld",
+    );
+    try doTest(
+        "hello world",
+        "wrld",
+    );
+    try doTestScore(
+        "foBarbaz1",
+        "obz",
+        o.score_match * 3 + o.score_gap_start * 2 + o.score_gap_extension * 1,
+    );
+    try doTestScore(
+        "fooBarbaz1",
+        "obz",
+        o.score_match * 3 + o.score_gap_start * 2 + o.score_gap_extension * 1,
+    );
+    try doTestScore(
+        "fooBarbaz1",
+        "fobz",
+        o.score_match * 4 + o.score_gap_start * 2 + o.score_gap_extension * 1,
     );
     // try doTest(
     //     "hello world",
