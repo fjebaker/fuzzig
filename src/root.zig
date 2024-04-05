@@ -160,8 +160,10 @@ pub fn Algorithm(
             std.debug.assert(rows <= self.m.rows);
             std.debug.assert(cols <= self.m.cols);
 
-            const first_match_indices = utils.firstMatches(
+            const first_match_indices = utils.firstMatchesGeneric(
                 ElType,
+                &self.impl,
+                Impl.eqlFunc,
                 self.first_match_buffer,
                 haystack,
                 needle,
@@ -357,17 +359,41 @@ pub fn Algorithm(
     };
 }
 
-pub const AsciiImpl = struct {
+pub const AsciiOptions = struct {
     const AsciiScores = Scores(i32);
 
-    case_sensitive: bool = false,
+    case_sensitive: bool = true,
+    case_penalize: bool = false,
+    penalty_case_mistmatch: i32 = -2,
 
-    fn scoreFunc(_: *const AsciiImpl, comptime scores: AsciiScores, n: u8, h: u8) ?i32 {
-        if (n != h) return null;
+    fn eqlFunc(a: *const AsciiOptions, h: u8, n: u8) bool {
+        if (!a.case_sensitive) {
+            return std.ascii.toLower(h) == std.ascii.toLower(n);
+        } else {
+            return h == n;
+        }
+    }
+
+    fn scoreFunc(
+        a: *const AsciiOptions,
+        comptime scores: AsciiScores,
+        h: u8,
+        n: u8,
+    ) ?i32 {
+        if (!a.eqlFunc(h, n)) return null;
+
+        if (a.case_penalize and (h != n)) {
+            return scores.score_match + a.penalty_case_mistmatch;
+        }
         return scores.score_match;
     }
 
-    fn bonusFunc(_: *const AsciiImpl, comptime scores: AsciiScores, prev: u8, curr: u8) i32 {
+    fn bonusFunc(
+        _: *const AsciiOptions,
+        comptime scores: AsciiScores,
+        prev: u8,
+        curr: u8,
+    ) i32 {
         const p = CharacterType.fromAscii(prev);
         const c = CharacterType.fromAscii(curr);
 
@@ -380,31 +406,15 @@ pub const AsciiImpl = struct {
     }
 };
 
-pub const Ascii = Algorithm(u8, i32, .{}, AsciiImpl);
+/// Default ASCII Fuzzy Finder
+pub const Ascii = Algorithm(u8, i32, .{}, AsciiOptions);
 
-fn doTest(haystack: []const u8, needle: []const u8) !void {
+fn doTestScore(opts: AsciiOptions, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
     var alg = try Ascii.init(
         std.testing.allocator,
         haystack.len,
         needle.len,
-        .{},
-    );
-    defer alg.deinit();
-
-    const s = alg.score(haystack, needle);
-    _ = s;
-
-    // const stderr = std.io.getStdErr().writer();
-    // try alg.debugPrint(stderr, haystack, needle);
-    // std.debug.print("SCORE : {d}\n", .{s orelse -1});
-}
-
-fn doTestScore(haystack: []const u8, needle: []const u8, comptime score: i32) !void {
-    var alg = try Ascii.init(
-        std.testing.allocator,
-        haystack.len,
-        needle.len,
-        .{},
+        opts,
     );
     defer alg.deinit();
 
@@ -418,70 +428,102 @@ fn doTestScore(haystack: []const u8, needle: []const u8, comptime score: i32) !v
 }
 
 test "algorithm test" {
-    const o = Scores(i32){};
-    try doTestScore("ab", "ab", o.score_match * 2 +
+    const o = AsciiOptions.AsciiScores{};
+    try doTestScore(.{}, "ab", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive);
 
-    try doTestScore("xab", "ab", o.score_match * 2 +
+    try doTestScore(.{}, "xab", "ab", o.score_match * 2 +
         o.bonus_consecutive);
 
-    try doTestScore("xabbaababab", "aba", o.score_match * 3 +
+    try doTestScore(.{}, "xabbaababab", "aba", o.score_match * 3 +
         o.bonus_consecutive * 2);
 
-    try doTestScore("aoo_boo", "ab", o.score_match * 2 +
+    try doTestScore(.{}, "aoo_boo", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.score_gap_start + o.score_gap_extension * 3 +
         o.bonus_break);
 
-    try doTestScore("acb", "ab", o.score_match * 2 +
+    try doTestScore(.{}, "acb", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.score_gap_start + o.score_gap_extension);
 
-    try doTestScore("hello world", "orld", o.score_match * 4 +
+    try doTestScore(.{}, "hello world", "orld", o.score_match * 4 +
         o.bonus_consecutive * 3);
 
-    try doTestScore("hello world", "wrld", o.score_match * 4 +
+    try doTestScore(.{}, "hello world", "wrld", o.score_match * 4 +
         o.bonus_consecutive * 2 +
         o.bonus_head +
         o.score_gap_start + o.score_gap_extension * 1);
 
-    try doTestScore("hello woorld", "wrld", o.score_match * 4 +
+    try doTestScore(.{}, "hello woorld", "wrld", o.score_match * 4 +
         o.bonus_consecutive * 2 +
         o.bonus_head +
         o.score_gap_start + o.score_gap_extension * 2);
 
-    try doTestScore("aaaaaaaaaaaaaaab", "b", o.score_match);
-    try doTestScore("acaaaaaaaaaaaaab", "cb", o.score_match * 2 +
+    try doTestScore(.{}, "aaaaaaaaaaaaaaab", "b", o.score_match);
+    try doTestScore(.{}, "acaaaaaaaaaaaaab", "cb", o.score_match * 2 +
         o.score_gap_start + o.score_gap_extension * 13);
 
-    try doTestScore("focarbaz1", "obz", o.score_match * 3 +
+    try doTestScore(.{}, "focarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore("fooBarbaz1", "obz", o.score_match * 3 +
+    try doTestScore(.{}, "fooBarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore("fooBarbaz1", "fobz", o.score_match * 4 +
+    try doTestScore(.{}, "fooBarbaz1", "fobz", o.score_match * 4 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive +
         o.score_gap_start * 2 +
         o.score_gap_extension * 5);
 
-    try doTestScore("foBarbaz1", "fobz", o.score_match * 4 +
+    try doTestScore(.{}, "foBarbaz1", "fobz", o.score_match * 4 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore("fooBarbaz1", "obz", o.score_match * 3 +
+    try doTestScore(.{}, "fooBarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore("xhell o", "helo", o.score_match * 4 +
+    try doTestScore(.{}, "xhell o", "helo", o.score_match * 4 +
         o.bonus_break +
         o.bonus_consecutive * 3 +
         o.score_gap_start * 1 +
         o.score_gap_extension * 3);
+}
+
+test "case sensitivity" {
+    const o = AsciiOptions.AsciiScores{};
+
+    try doTestScore(
+        .{ .case_sensitive = true },
+        "xab",
+        "ab",
+        o.score_match * 2 +
+            o.bonus_consecutive,
+    );
+
+    try doTestScore(
+        .{ .case_sensitive = false },
+        "xaB",
+        "ab",
+        o.score_match * 2 +
+            o.bonus_consecutive,
+    );
+
+    const opts: AsciiOptions = .{
+        .case_sensitive = false,
+        .case_penalize = true,
+    };
+    try doTestScore(
+        opts,
+        "xaB",
+        "ab",
+        o.score_match * 2 +
+            o.bonus_consecutive + opts.penalty_case_mistmatch,
+    );
 }

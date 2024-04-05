@@ -49,10 +49,10 @@ pub const CharacterType = enum {
     }
 };
 
-/// Computes a simple equality check, recording the successive indices of haystack
-/// that match successive characters in needle.
-pub fn firstMatches(
+pub fn firstMatchesGeneric(
     comptime T: type,
+    ctx: anytype,
+    comptime eqlFunc: fn (@TypeOf(ctx), h: T, n: T) bool,
     indices: []usize,
     haystack: []const T,
     needle: []const T,
@@ -68,7 +68,7 @@ pub fn firstMatches(
     for (0.., haystack) |i, h| {
         const n = needle[index];
 
-        if (h == n) {
+        if (eqlFunc(ctx, h, n)) {
             indices[index] = i;
             index += 1;
             if (index >= needle.len) break;
@@ -76,6 +76,25 @@ pub fn firstMatches(
     } else return null;
 
     return indices[0..index];
+}
+
+fn simpleEql(comptime T: type) fn (void, T, T) bool {
+    return struct {
+        fn f(_: void, h: T, n: T) bool {
+            return h == n;
+        }
+    }.f;
+}
+
+/// Computes a simple equality check, recording the successive indices of haystack
+/// that match successive characters in needle.
+pub fn firstMatches(
+    comptime T: type,
+    indices: []usize,
+    haystack: []const T,
+    needle: []const T,
+) ?[]const usize {
+    return firstMatchesGeneric(T, {}, simpleEql(T), indices, haystack, needle);
 }
 
 pub fn firstMatchesAlloc(
