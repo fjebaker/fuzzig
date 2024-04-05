@@ -51,7 +51,7 @@ const MatrixT = structures.MatrixT;
 //
 // The algorithm is now O(mn).
 
-pub fn Options(comptime ScoreT: type) type {
+pub fn Scores(comptime ScoreT: type) type {
     return struct {
         score_match: ScoreT = 16,
         score_gap_start: ScoreT = -3,
@@ -60,10 +60,11 @@ pub fn Options(comptime ScoreT: type) type {
         default_score: ScoreT = 0,
 
         // bonuses
-        bonus_break: ScoreT = 5,
-        bonus_camel: ScoreT = 2,
         bonus_consecutive: ScoreT = 4,
         bonus_first_character_multiplier: ScoreT = 2,
+
+        bonus_break: ScoreT = 5,
+        bonus_camel: ScoreT = 2,
         bonus_head: ScoreT = 8,
         bonus_tail: ScoreT = 0,
     };
@@ -72,7 +73,8 @@ pub fn Options(comptime ScoreT: type) type {
 pub fn Algorithm(
     comptime ElType: type,
     comptime ScoreT: type,
-    comptime opts: Options(ScoreT),
+    comptime scores: Scores(ScoreT),
+    comptime Impl: type,
 ) type {
     return struct {
         const Matrix = MatrixT(ScoreT);
@@ -94,6 +96,8 @@ pub fn Algorithm(
 
         allocator: std.mem.Allocator,
 
+        impl: Impl,
+
         pub fn deinit(self: *Self) void {
             self.m.deinit();
             self.x.deinit();
@@ -108,6 +112,7 @@ pub fn Algorithm(
             allocator: std.mem.Allocator,
             max_haystack: usize,
             max_needle: usize,
+            impl: Impl,
         ) !Self {
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
@@ -137,6 +142,7 @@ pub fn Algorithm(
                 .bonus_buffer = bonus_buffer,
                 .first_match_buffer = first_match_buffer,
                 .allocator = allocator,
+                .impl = impl,
             };
         }
 
@@ -176,31 +182,14 @@ pub fn Algorithm(
         fn determineBonuses(self: *Self, haystack: []const ElType) void {
             var prev: u8 = 0;
             for (1.., haystack) |i, h| {
-                self.role_bonus[i] = bonusFor(prev, h);
+                self.role_bonus[i] = Impl.bonusFunc(&self.impl, scores, prev, h);
                 prev = h;
             }
 
             if (self.role_bonus.len > 1) {
                 self.role_bonus[1] = self.role_bonus[1] *
-                    opts.bonus_first_character_multiplier;
+                    scores.bonus_first_character_multiplier;
             }
-        }
-
-        fn scoreFunc(n: ElType, h: ElType) ?ScoreT {
-            if (n != h) return null;
-            return opts.score_match;
-        }
-
-        fn bonusFor(prev: ElType, curr: ElType) ScoreT {
-            const p = CharacterType.fromAscii(prev);
-            const c = CharacterType.fromAscii(curr);
-
-            return switch (p.roleNextTo(c)) {
-                .Head => opts.bonus_head,
-                .Camel => opts.bonus_camel,
-                .Break => opts.bonus_break,
-                .Tail => opts.bonus_tail,
-            };
         }
 
         fn reset(
@@ -214,14 +203,14 @@ pub fn Algorithm(
             @memset(self.skip.matrix, true);
 
             // set the first row and column to zero
-            @memset(self.m.getRow(0), opts.default_score);
-            @memset(self.x.getRow(0), opts.default_score);
+            @memset(self.m.getRow(0), scores.default_score);
+            @memset(self.x.getRow(0), scores.default_score);
 
             for (1..rows) |i| {
                 if (first_match_indices.len <= i - 1) break;
                 const j = first_match_indices[i - 1];
-                self.m.set(i, j, opts.default_score);
-                self.x.set(i, j, opts.default_score);
+                self.m.set(i, j, scores.default_score);
+                self.x.set(i, j, scores.default_score);
             }
 
             @memset(self.bonus_buffer, 0);
@@ -259,7 +248,7 @@ pub fn Algorithm(
                     // start by updating the M matrix
 
                     // compute score
-                    if (scoreFunc(n, h)) |current| {
+                    if (Impl.scoreFunc(&self.impl, scores, n, h)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -267,7 +256,7 @@ pub fn Algorithm(
 
                         const prev_matched = !self.skip.get(i - 1, j - 1);
                         const consecutive_bonus = if (prev_matched)
-                            opts.bonus_consecutive
+                            scores.bonus_consecutive
                         else
                             0;
 
@@ -289,7 +278,7 @@ pub fn Algorithm(
                             self.skip.set(i, j - 1, true);
                         }
                     } else {
-                        self.m.set(i, j, opts.default_score);
+                        self.m.set(i, j, scores.default_score);
                         self.skip.set(i, j - 1, true);
                         self.bonus_buffer[j] = 0;
                     }
@@ -298,13 +287,13 @@ pub fn Algorithm(
 
                     // cost of starting a new gap
                     const x_start =
-                        opts.score_gap_start +
-                        opts.score_gap_extension +
+                        scores.score_gap_start +
+                        scores.score_gap_extension +
                         self.m.get(i, j - 1); // M[i,j-1]
 
                     // cost of extending
                     const x_extend =
-                        opts.score_gap_extension +
+                        scores.score_gap_extension +
                         self.x.get(i, j - 1); // X[i,j-1]
 
                     if (x_start >= x_extend) {
@@ -368,13 +357,37 @@ pub fn Algorithm(
     };
 }
 
-pub const Ascii = Algorithm(u8, i32, .{});
+pub const AsciiImpl = struct {
+    const AsciiScores = Scores(i32);
+
+    case_sensitive: bool = false,
+
+    fn scoreFunc(_: *const AsciiImpl, comptime scores: AsciiScores, n: u8, h: u8) ?i32 {
+        if (n != h) return null;
+        return scores.score_match;
+    }
+
+    fn bonusFunc(_: *const AsciiImpl, comptime scores: AsciiScores, prev: u8, curr: u8) i32 {
+        const p = CharacterType.fromAscii(prev);
+        const c = CharacterType.fromAscii(curr);
+
+        return switch (p.roleNextTo(c)) {
+            .Head => scores.bonus_head,
+            .Camel => scores.bonus_camel,
+            .Break => scores.bonus_break,
+            .Tail => scores.bonus_tail,
+        };
+    }
+};
+
+pub const Ascii = Algorithm(u8, i32, .{}, AsciiImpl);
 
 fn doTest(haystack: []const u8, needle: []const u8) !void {
     var alg = try Ascii.init(
         std.testing.allocator,
         haystack.len,
         needle.len,
+        .{},
     );
     defer alg.deinit();
 
@@ -391,6 +404,7 @@ fn doTestScore(haystack: []const u8, needle: []const u8, comptime score: i32) !v
         std.testing.allocator,
         haystack.len,
         needle.len,
+        .{},
     );
     defer alg.deinit();
 
@@ -404,7 +418,7 @@ fn doTestScore(haystack: []const u8, needle: []const u8, comptime score: i32) !v
 }
 
 test "algorithm test" {
-    const o = Options(i32){};
+    const o = Scores(i32){};
     try doTestScore("ab", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive);
