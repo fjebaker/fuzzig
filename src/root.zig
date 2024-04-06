@@ -364,10 +364,19 @@ pub const AsciiOptions = struct {
 
     case_sensitive: bool = true,
     case_penalize: bool = false,
+    // treat spaces as wildcards for any kind of boundary
+    // i.e. match with any `[^a-z,A-Z,0-9]`
+    wildcard_spaces: bool = false,
+
     penalty_case_mistmatch: i32 = -2,
 
     fn eqlFunc(a: *const AsciiOptions, h: u8, n: u8) bool {
-        if (!a.case_sensitive) {
+        if (n == ' ' and a.wildcard_spaces) {
+            return switch (h) {
+                'a'...'z', 'A'...'Z', '0'...'9' => false,
+                else => true,
+            };
+        } else if (!a.case_sensitive) {
             return std.ascii.toLower(h) == std.ascii.toLower(n);
         } else {
             return h == n;
