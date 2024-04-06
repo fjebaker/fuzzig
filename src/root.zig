@@ -250,7 +250,7 @@ pub fn Algorithm(
                     // start by updating the M matrix
 
                     // compute score
-                    if (Impl.scoreFunc(&self.impl, scores, n, h)) |current| {
+                    if (Impl.scoreFunc(&self.impl, scores, h, n)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -400,11 +400,11 @@ pub const AsciiOptions = struct {
     fn bonusFunc(
         _: *const AsciiOptions,
         comptime scores: AsciiScores,
-        prev: u8,
-        curr: u8,
+        h: u8,
+        n: u8,
     ) i32 {
-        const p = CharacterType.fromAscii(prev);
-        const c = CharacterType.fromAscii(curr);
+        const p = CharacterType.fromAscii(h);
+        const c = CharacterType.fromAscii(n);
 
         return switch (p.roleNextTo(c)) {
             .Head => scores.bonus_head,
