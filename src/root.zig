@@ -536,3 +536,30 @@ test "case sensitivity" {
             o.bonus_consecutive + opts.penalty_case_mistmatch,
     );
 }
+
+test "wildcard space" {
+    const o = AsciiOptions.AsciiScores{};
+    try doTestScore(
+        .{ .wildcard_spaces = true },
+        "ztechno-beyond things",
+        "tech",
+        o.score_match * 4 +
+            o.bonus_consecutive * 3,
+    );
+
+    try doTestScore(
+        .{ .wildcard_spaces = true },
+        "z-abc",
+        " ",
+        o.score_match * 1,
+    );
+
+    try doTestScore(
+        .{ .wildcard_spaces = true },
+        "ztechno-beyond things",
+        "tech ",
+        o.score_match * 5 +
+            o.bonus_consecutive * 3 +
+            o.score_gap_start + o.score_gap_extension * 2,
+    );
+}
