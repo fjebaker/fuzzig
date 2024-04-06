@@ -198,7 +198,11 @@ pub fn Algorithm(
             self.determineBonuses(haystack);
 
             try self.populateMatrices(haystack, needle, first_match_indices);
-            const col_max = self.findMaximalElement(first_match_indices, needle.len);
+            const col_max = self.findMaximalElement(
+                first_match_indices,
+                rows,
+                cols,
+            );
 
             const last_row_index = needle.len;
             const s = self.m.get(last_row_index, col_max);
@@ -224,6 +228,7 @@ pub fn Algorithm(
                 return .{ .score = null };
 
             const matches = self.traceback(
+                needle.len,
                 s.col_max,
                 self.traceback_buffer,
                 s.first_match_indices,
@@ -233,11 +238,12 @@ pub fn Algorithm(
 
         fn traceback(
             self: *Self,
+            row_max: usize,
             col_max: usize,
             traceback_buffer: []usize,
             first_match_indices: []const usize,
         ) []const usize {
-            var row = self.m.rows - 1;
+            var row = row_max;
             var col = col_max;
 
             var tb_index: usize = 0;
@@ -282,6 +288,8 @@ pub fn Algorithm(
             @memset(self.m.matrix, 0);
             @memset(self.x.matrix, 0);
             @memset(self.m_skip.matrix, true);
+            @memset(self.first_match_buffer, 0);
+            @memset(self.traceback_buffer, 0);
 
             // set the first row and column to zero
             @memset(self.m.getRow(0), scores.default_score);
@@ -294,14 +302,15 @@ pub fn Algorithm(
                 self.x.set(i, j, scores.default_score);
             }
 
-            @memset(self.bonus_buffer, 0);
             @memset(self.role_bonus, 0);
+            @memset(self.bonus_buffer, 0);
         }
 
         fn findMaximalElement(
             self: *const Self,
             first_match_indices: []const usize,
             last_row_index: usize,
+            last_col_index: usize,
         ) usize {
             // the first visted element of the last row
             const start =
@@ -309,7 +318,11 @@ pub fn Algorithm(
             const last_row = self.m.getRow(last_row_index);
 
             // iterate over the visited element of the last row
-            return std.mem.indexOfMax(ScoreT, last_row[start..]) + start;
+            const index = std.mem.indexOfMax(
+                ScoreT,
+                last_row[start .. last_col_index + 1],
+            );
+            return index + start;
         }
 
         fn populateMatrices(
@@ -355,16 +368,15 @@ pub fn Algorithm(
                         const score_match = prev_score_match + current_bonus + current;
                         const score_skip = prev_score_skip + role_bonus + current;
 
+                        self.m_skip.set(i, j, false);
+
                         if (score_match >= score_skip) {
                             self.m.set(i, j, score_match);
-                            self.m_skip.set(i, j, false);
                         } else {
                             self.m.set(i, j, score_skip);
-                            self.m_skip.set(i, j, false);
                         }
                     } else {
                         self.m.set(i, j, scores.default_score);
-                        self.m_skip.set(i, j, true);
                         self.bonus_buffer[j] = 0;
                     }
 
@@ -416,8 +428,10 @@ pub fn Algorithm(
 
             try writer.writeByteNTimes('\n', 2);
 
+            const max_col = haystack.len + 1;
+
             try writer.writeByteNTimes(' ', 4);
-            for (self.m.getRow(0), self.m_skip.getRow(0)) |el, skip| {
+            for (self.m.getRow(0)[0..max_col], self.m_skip.getRow(0)[0..max_col]) |el, skip| {
                 const width = utils.digitCount(el);
                 try writer.writeByteNTimes(' ', el_width - width);
                 try writer.print("{d}{c}", .{ el, if (skip) @as(u8, '-') else @as(u8, 'm') });
@@ -428,7 +442,7 @@ pub fn Algorithm(
                 try writer.print("'{c}'", .{n});
                 try writer.writeByteNTimes(' ', 1);
 
-                for (self.m.getRow(row), self.m_skip.getRow(row)) |el, skip| {
+                for (self.m.getRow(row)[0..max_col], self.m_skip.getRow(row)[0..max_col]) |el, skip| {
                     const width = utils.digitCount(el);
                     try writer.writeByteNTimes(' ', el_width - width);
                     try writer.print("{d}{c}", .{ el, if (skip) @as(u8, '-') else @as(u8, 'm') });
@@ -499,15 +513,7 @@ pub const AsciiOptions = struct {
 /// Default ASCII Fuzzy Finder
 pub const Ascii = Algorithm(u8, i32, .{}, AsciiOptions);
 
-fn doTestScore(opts: AsciiOptions, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
-    var alg = try Ascii.init(
-        std.testing.allocator,
-        haystack.len,
-        needle.len,
-        opts,
-    );
-    defer alg.deinit();
-
+fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
     const s = alg.score(haystack, needle);
 
     // const stderr = std.io.getStdErr().writer();
@@ -519,75 +525,84 @@ fn doTestScore(opts: AsciiOptions, haystack: []const u8, needle: []const u8, com
 
 test "algorithm test" {
     const o = AsciiOptions.AsciiScores{};
-    try doTestScore(.{}, "ab", "ab", o.score_match * 2 +
+
+    var alg = try Ascii.init(
+        std.testing.allocator,
+        128,
+        32,
+        .{},
+    );
+    defer alg.deinit();
+
+    try doTestScore(&alg, "ab", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive);
 
-    try doTestScore(.{}, "xab", "ab", o.score_match * 2 +
+    try doTestScore(&alg, "xab", "ab", o.score_match * 2 +
         o.bonus_consecutive);
 
-    try doTestScore(.{}, "xabbaababab", "aba", o.score_match * 3 +
+    try doTestScore(&alg, "xabbaababab", "aba", o.score_match * 3 +
         o.bonus_consecutive * 2);
 
-    try doTestScore(.{}, "aoo_boo", "ab", o.score_match * 2 +
+    try doTestScore(&alg, "aoo_boo", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.score_gap_start + o.score_gap_extension * 3 +
         o.bonus_break);
 
-    try doTestScore(.{}, "acb", "ab", o.score_match * 2 +
+    try doTestScore(&alg, "acb", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.score_gap_start + o.score_gap_extension);
 
-    try doTestScore(.{}, "hello world", "orld", o.score_match * 4 +
+    try doTestScore(&alg, "hello world", "orld", o.score_match * 4 +
         o.bonus_consecutive * 3);
 
-    try doTestScore(.{}, "hello world", "wrld", o.score_match * 4 +
+    try doTestScore(&alg, "hello world", "wrld", o.score_match * 4 +
         o.bonus_consecutive * 2 +
         o.bonus_head +
         o.score_gap_start + o.score_gap_extension * 1);
 
-    try doTestScore(.{}, "hello woorld", "wrld", o.score_match * 4 +
+    try doTestScore(&alg, "hello woorld", "wrld", o.score_match * 4 +
         o.bonus_consecutive * 2 +
         o.bonus_head +
         o.score_gap_start + o.score_gap_extension * 2);
 
-    try doTestScore(.{}, "aaaaaaaaaaaaaaab", "b", o.score_match);
+    try doTestScore(&alg, "aaaaaaaaaaaaaaab", "b", o.score_match);
 
-    try doTestScore(.{}, "ac" ++ "a" ** 13 ++ "b", "cb", o.score_match * 2 +
+    try doTestScore(&alg, "ac" ++ "a" ** 13 ++ "b", "cb", o.score_match * 2 +
         o.score_gap_start + o.score_gap_extension * 13);
 
     try doTestScore(
-        .{},
+        &alg,
         "ac" ++ "a" ** 13 ++ "b" ++ "a" ** 14 ++ "d",
         "cbd",
         o.score_match * 3 + o.score_gap_start * 2 + o.score_gap_extension * 26,
     );
 
-    try doTestScore(.{}, "focarbaz1", "obz", o.score_match * 3 +
+    try doTestScore(&alg, "focarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore(.{}, "fooBarbaz1", "obz", o.score_match * 3 +
+    try doTestScore(&alg, "fooBarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore(.{}, "fooBarbaz1", "fobz", o.score_match * 4 +
+    try doTestScore(&alg, "fooBarbaz1", "fobz", o.score_match * 4 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive +
         o.score_gap_start * 2 +
         o.score_gap_extension * 5);
 
-    try doTestScore(.{}, "foBarbaz1", "fobz", o.score_match * 4 +
+    try doTestScore(&alg, "foBarbaz1", "fobz", o.score_match * 4 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore(.{}, "fooBarbaz1", "obz", o.score_match * 3 +
+    try doTestScore(&alg, "fooBarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
         o.score_gap_extension * 4);
 
-    try doTestScore(.{}, "xhell o", "helo", o.score_match * 4 +
+    try doTestScore(&alg, "xhell o", "helo", o.score_match * 4 +
         o.bonus_break +
         o.bonus_consecutive * 3 +
         o.score_gap_start * 1 +
@@ -597,8 +612,16 @@ test "algorithm test" {
 test "case sensitivity" {
     const o = AsciiOptions.AsciiScores{};
 
+    var alg1 = try Ascii.init(
+        std.testing.allocator,
+        128,
+        32,
+        .{ .case_sensitive = false },
+    );
+    defer alg1.deinit();
+
     try doTestScore(
-        .{ .case_sensitive = true },
+        &alg1,
         "xab",
         "ab",
         o.score_match * 2 +
@@ -606,30 +629,45 @@ test "case sensitivity" {
     );
 
     try doTestScore(
-        .{ .case_sensitive = false },
+        &alg1,
         "xaB",
         "ab",
         o.score_match * 2 +
             o.bonus_consecutive,
     );
 
-    const opts: AsciiOptions = .{
-        .case_sensitive = false,
-        .case_penalize = true,
-    };
+    var alg2 = try Ascii.init(
+        std.testing.allocator,
+        128,
+        32,
+        .{
+            .case_sensitive = false,
+            .case_penalize = true,
+        },
+    );
+    defer alg2.deinit();
+
+    const A: AsciiOptions = .{};
     try doTestScore(
-        opts,
+        &alg2,
         "xaB",
         "ab",
         o.score_match * 2 +
-            o.bonus_consecutive + opts.penalty_case_mistmatch,
+            o.bonus_consecutive + A.penalty_case_mistmatch,
     );
 }
 
 test "wildcard space" {
     const o = AsciiOptions.AsciiScores{};
-    try doTestScore(
+    var alg = try Ascii.init(
+        std.testing.allocator,
+        128,
+        32,
         .{ .wildcard_spaces = true },
+    );
+    defer alg.deinit();
+    try doTestScore(
+        &alg,
         "ztechno-beyond things",
         "tech",
         o.score_match * 4 +
@@ -637,14 +675,14 @@ test "wildcard space" {
     );
 
     try doTestScore(
-        .{ .wildcard_spaces = true },
+        &alg,
         "z-abc",
         " ",
         o.score_match * 1,
     );
 
     try doTestScore(
-        .{ .wildcard_spaces = true },
+        &alg,
         "ztechno-beyond things",
         "tech ",
         o.score_match * 5 +
@@ -653,15 +691,7 @@ test "wildcard space" {
     );
 }
 
-fn doTestTraceback(opts: AsciiOptions, haystack: []const u8, needle: []const u8, comptime matches: []const usize) !void {
-    var alg = try Ascii.init(
-        std.testing.allocator,
-        haystack.len,
-        needle.len,
-        opts,
-    );
-    defer alg.deinit();
-
+fn doTestTraceback(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime matches: []const usize) !void {
     const s = alg.scoreMatches(haystack, needle);
 
     // const stderr = std.io.getStdErr().writer();
@@ -672,8 +702,17 @@ fn doTestTraceback(opts: AsciiOptions, haystack: []const u8, needle: []const u8,
 }
 
 test "traceback" {
-    try doTestTraceback(.{}, "ab", "ab", &.{ 0, 1 });
-    try doTestTraceback(.{}, "a_b", "ab", &.{ 0, 2 });
-    try doTestTraceback(.{}, "abcdefg", "abcefg", &.{ 0, 1, 2, 4, 5, 6 });
-    try doTestTraceback(.{}, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
+    var alg = try Ascii.init(
+        std.testing.allocator,
+        64,
+        32,
+        .{},
+    );
+    defer alg.deinit();
+
+    try doTestTraceback(&alg, "ab", "ab", &.{ 0, 1 });
+    try doTestTraceback(&alg, "a_b", "ab", &.{ 0, 2 });
+    try doTestTraceback(&alg, "abcdefg", "abcefg", &.{ 0, 1, 2, 4, 5, 6 });
+    try doTestTraceback(&alg, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
+    try doTestTraceback(&alg, "./src/main.zig", "main", &.{ 6, 7, 8, 9 });
 }
