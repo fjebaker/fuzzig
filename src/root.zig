@@ -85,7 +85,7 @@ pub fn Algorithm(
         // Skip score matrix
         x: Matrix,
         // Skip index
-        skip: MatrixT(bool),
+        m_skip: MatrixT(bool),
 
         // Character positional / role bonuses
         role_bonus: []ScoreT,
@@ -94,6 +94,8 @@ pub fn Algorithm(
         // Buffer for the row wise first matches
         first_match_buffer: []usize,
 
+        traceback_buffer: []usize,
+
         allocator: std.mem.Allocator,
 
         impl: Impl,
@@ -101,10 +103,11 @@ pub fn Algorithm(
         pub fn deinit(self: *Self) void {
             self.m.deinit();
             self.x.deinit();
-            self.skip.deinit();
+            self.m_skip.deinit();
             self.allocator.free(self.role_bonus);
             self.allocator.free(self.bonus_buffer);
             self.allocator.free(self.first_match_buffer);
+            self.allocator.free(self.traceback_buffer);
             self.* = undefined;
         }
 
@@ -121,8 +124,8 @@ pub fn Algorithm(
             errdefer m.deinit();
             var x = try Matrix.init(allocator, rows, cols);
             errdefer x.deinit();
-            var skip = try MatrixT(bool).init(allocator, rows, cols);
-            errdefer skip.deinit();
+            var m_skip = try MatrixT(bool).init(allocator, rows, cols);
+            errdefer m_skip.deinit();
 
             const role_bonus = try allocator.alloc(ScoreT, cols);
             errdefer allocator.free(role_bonus);
@@ -133,14 +136,18 @@ pub fn Algorithm(
             const first_match_buffer = try allocator.alloc(usize, rows);
             errdefer allocator.free(first_match_buffer);
 
+            const traceback_buffer = try allocator.alloc(usize, cols);
+            errdefer allocator.free(traceback_buffer);
+
             return .{
                 .m = m,
                 .x = x,
-                .skip = skip,
+                .m_skip = m_skip,
 
                 .role_bonus = role_bonus,
                 .bonus_buffer = bonus_buffer,
                 .first_match_buffer = first_match_buffer,
+                .traceback_buffer = traceback_buffer,
                 .allocator = allocator,
                 .impl = impl,
             };
@@ -152,7 +159,25 @@ pub fn Algorithm(
             haystack: []const ElType,
             needle: []const ElType,
         ) ?ScoreT {
-            if (needle.len == 0) return 0;
+            const info = self.scoreImpl(haystack, needle) orelse
+                return null;
+            return info.score;
+        }
+
+        const ScoreInfo = struct {
+            score: ScoreT,
+            col_max: usize = 0,
+            first_match_indices: []const usize = &.{},
+        };
+
+        fn scoreImpl(
+            self: *Self,
+            haystack: []const ElType,
+            needle: []const ElType,
+        ) ?ScoreInfo {
+            if (needle.len == 0) return .{
+                .score = 0,
+            };
 
             const rows = needle.len;
             const cols = haystack.len;
@@ -175,10 +200,64 @@ pub fn Algorithm(
             try self.populateMatrices(haystack, needle, first_match_indices);
             const col_max = self.findMaximalElement(first_match_indices, needle.len);
 
-            // self.traceback(col_max, first_match_indices);
-
             const last_row_index = needle.len;
-            return self.m.get(last_row_index, col_max);
+            const s = self.m.get(last_row_index, col_max);
+            return .{
+                .score = s,
+                .col_max = col_max,
+                .first_match_indices = first_match_indices,
+            };
+        }
+
+        pub const Matches = struct {
+            score: ?ScoreT,
+            matches: []const usize = &.{},
+        };
+
+        /// Compute the score and the indices of the matched characters
+        pub fn scoreMatches(
+            self: *Self,
+            haystack: []const u8,
+            needle: []const u8,
+        ) Matches {
+            const s = self.scoreImpl(haystack, needle) orelse
+                return .{ .score = null };
+
+            const matches = self.traceback(
+                s.col_max,
+                self.traceback_buffer,
+                s.first_match_indices,
+            );
+            return .{ .score = s.score, .matches = matches };
+        }
+
+        fn traceback(
+            self: *Self,
+            col_max: usize,
+            traceback_buffer: []usize,
+            first_match_indices: []const usize,
+        ) []const usize {
+            var row = self.m.rows - 1;
+            var col = col_max;
+
+            var tb_index: usize = 0;
+
+            // the first visited element in the first row
+            const beginning = first_match_indices[0];
+
+            while (row > 0 and col > beginning) {
+                const skipped = self.m_skip.get(row, col);
+                if (skipped == false) {
+                    traceback_buffer[tb_index] = col - 1;
+                    tb_index += 1;
+                    row -= 1;
+                }
+                col -= 1;
+            }
+
+            const buf = traceback_buffer[0..tb_index];
+            std.mem.reverse(usize, buf);
+            return buf;
         }
 
         fn determineBonuses(self: *Self, haystack: []const ElType) void {
@@ -202,7 +281,7 @@ pub fn Algorithm(
             // TODO: remove, this is for debugging
             @memset(self.m.matrix, 0);
             @memset(self.x.matrix, 0);
-            @memset(self.skip.matrix, true);
+            @memset(self.m_skip.matrix, true);
 
             // set the first row and column to zero
             @memset(self.m.getRow(0), scores.default_score);
@@ -256,7 +335,11 @@ pub fn Algorithm(
                         // role bonus for current character
                         const role_bonus = self.role_bonus[j];
 
-                        const prev_matched = !self.skip.get(i - 1, j - 1);
+                        // TODO: this could be iffy? if too many penalties arrise
+                        // then there is a chance that this is negative
+                        // but that the previous index was still matched
+                        // const prev_matched = prev_score_match > 0;
+                        const prev_matched = !self.m_skip.get(i - 1, j - 1);
                         const consecutive_bonus = if (prev_matched)
                             scores.bonus_consecutive
                         else
@@ -274,14 +357,14 @@ pub fn Algorithm(
 
                         if (score_match >= score_skip) {
                             self.m.set(i, j, score_match);
-                            self.skip.set(i, j - 1, false);
+                            self.m_skip.set(i, j, false);
                         } else {
                             self.m.set(i, j, score_skip);
-                            self.skip.set(i, j - 1, true);
+                            self.m_skip.set(i, j, false);
                         }
                     } else {
                         self.m.set(i, j, scores.default_score);
-                        self.skip.set(i, j - 1, true);
+                        self.m_skip.set(i, j, true);
                         self.bonus_buffer[j] = 0;
                     }
 
@@ -300,10 +383,8 @@ pub fn Algorithm(
 
                     if (x_start >= x_extend) {
                         self.x.set(i, j, x_start);
-                        self.skip.set(i, j - 1, false);
                     } else {
                         self.x.set(i, j, x_extend);
-                        self.skip.set(i, j - 1, true);
                     }
                 }
             }
@@ -336,7 +417,7 @@ pub fn Algorithm(
             try writer.writeByteNTimes('\n', 2);
 
             try writer.writeByteNTimes(' ', 4);
-            for (self.m.getRow(0), self.skip.getRow(0)) |el, skip| {
+            for (self.m.getRow(0), self.m_skip.getRow(0)) |el, skip| {
                 const width = utils.digitCount(el);
                 try writer.writeByteNTimes(' ', el_width - width);
                 try writer.print("{d}{c}", .{ el, if (skip) @as(u8, '-') else @as(u8, 'm') });
@@ -347,7 +428,7 @@ pub fn Algorithm(
                 try writer.print("'{c}'", .{n});
                 try writer.writeByteNTimes(' ', 1);
 
-                for (self.m.getRow(row), self.skip.getRow(row)) |el, skip| {
+                for (self.m.getRow(row), self.m_skip.getRow(row)) |el, skip| {
                     const width = utils.digitCount(el);
                     try writer.writeByteNTimes(' ', el_width - width);
                     try writer.print("{d}{c}", .{ el, if (skip) @as(u8, '-') else @as(u8, 'm') });
@@ -471,8 +552,16 @@ test "algorithm test" {
         o.score_gap_start + o.score_gap_extension * 2);
 
     try doTestScore(.{}, "aaaaaaaaaaaaaaab", "b", o.score_match);
-    try doTestScore(.{}, "acaaaaaaaaaaaaab", "cb", o.score_match * 2 +
+
+    try doTestScore(.{}, "ac" ++ "a" ** 13 ++ "b", "cb", o.score_match * 2 +
         o.score_gap_start + o.score_gap_extension * 13);
+
+    try doTestScore(
+        .{},
+        "ac" ++ "a" ** 13 ++ "b" ++ "a" ** 14 ++ "d",
+        "cbd",
+        o.score_match * 3 + o.score_gap_start * 2 + o.score_gap_extension * 26,
+    );
 
     try doTestScore(.{}, "focarbaz1", "obz", o.score_match * 3 +
         o.score_gap_start * 2 +
@@ -562,4 +651,29 @@ test "wildcard space" {
             o.bonus_consecutive * 3 +
             o.score_gap_start + o.score_gap_extension * 2,
     );
+}
+
+fn doTestTraceback(opts: AsciiOptions, haystack: []const u8, needle: []const u8, comptime matches: []const usize) !void {
+    var alg = try Ascii.init(
+        std.testing.allocator,
+        haystack.len,
+        needle.len,
+        opts,
+    );
+    defer alg.deinit();
+
+    const s = alg.scoreMatches(haystack, needle);
+
+    // const stderr = std.io.getStdErr().writer();
+    // try alg.debugPrint(stderr, haystack, needle);
+    // std.debug.print("SCORE : {d}\n", .{s.score orelse -1});
+
+    try std.testing.expectEqualSlices(usize, matches, s.matches);
+}
+
+test "traceback" {
+    try doTestTraceback(.{}, "ab", "ab", &.{ 0, 1 });
+    try doTestTraceback(.{}, "a_b", "ab", &.{ 0, 2 });
+    try doTestTraceback(.{}, "abcdefg", "abcefg", &.{ 0, 1, 2, 4, 5, 6 });
+    try doTestTraceback(.{}, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
 }
