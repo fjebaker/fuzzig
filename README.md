@@ -65,7 +65,7 @@ To use in a Zig project, add it to your `build.zig.zon`
     .dependencies = .{
         .fuzzig = .{
             .url = "https://github.com/fjebaker/fuzzig/archive/main.tar.gz",
-            .hash = "12209d5b016f0821130094099068cdb3b3c90e8465d7b95687d642a69a41798e099d",
+            .hash = "" // get with `zig fetch`
         },
     },
     // ...
