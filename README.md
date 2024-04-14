@@ -52,6 +52,9 @@ See the [`AsciiOptions` struct](https://github.com/fjebaker/fuzzig/blob/a78afdde
 
 The module defines an `Algorithm` generic type, which accepts the element type of the array to be fuzzy searched, the score type and values, and an algorithm implementation. The implementation must define an `eqlFunc`, a `scoreFunc` and a `bonusFunc` used to test for equality between tokens, for determining the score of two matching tokens, and for determining any in-places bonuses respectively.
 
+- Algorithms only have `score` and `scoreMatches` as public functions.
+- If not matches are detected, the score will be `null`.
+
 This package currently only implements an [ASCII fuzzy finder](https://github.com/fjebaker/fuzzig/blob/a78afddec30b547643604aafaee202db6fc878f1/src/root.zig#L457-L511), but can be used as reference to extend to e.g. UTF8 or other character encodings.
 
 ## Usage
