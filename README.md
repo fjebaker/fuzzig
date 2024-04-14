@@ -46,6 +46,8 @@ Score: 104
 Score with traceback: 104 { 6, 7, 8, 9, 10 }
 ```
 
+The traceback shows the indexes of the haystack that were matched, useful for generating visual feedback.
+
 See the [`AsciiOptions` struct](https://github.com/fjebaker/fuzzig/blob/a78afddec30b547643604aafaee202db6fc878f1/src/root.zig#L460-L466) for a list of available options.
 
 ## Design
