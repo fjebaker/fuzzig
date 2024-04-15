@@ -182,8 +182,10 @@ pub fn Algorithm(
             const rows = needle.len;
             const cols = haystack.len;
 
-            std.debug.assert(rows <= self.m.rows);
-            std.debug.assert(cols <= self.m.cols);
+            // resize the view into memory
+            self.m.resizeNoAlloc(rows + 1, cols + 1);
+            self.x.resizeNoAlloc(rows + 1, cols + 1);
+            self.m_skip.resizeNoAlloc(rows + 1, cols + 1);
 
             const first_match_indices = utils.firstMatchesGeneric(
                 ElType,
@@ -194,7 +196,7 @@ pub fn Algorithm(
                 needle,
             ) orelse return null;
 
-            self.reset(rows, first_match_indices);
+            self.reset(rows + 1, cols + 1, first_match_indices);
             self.determineBonuses(haystack);
 
             try self.populateMatrices(haystack, needle, first_match_indices);
@@ -282,18 +284,14 @@ pub fn Algorithm(
         fn reset(
             self: *Self,
             rows: usize,
+            cols: usize,
             first_match_indices: []const usize,
         ) void {
-            // TODO: remove, this is for debugging
-            @memset(self.m.matrix, 0);
-            @memset(self.x.matrix, 0);
-            @memset(self.m_skip.matrix, true);
-            @memset(self.first_match_buffer, 0);
-            @memset(self.traceback_buffer, 0);
-
-            // set the first row and column to zero
-            @memset(self.m.getRow(0), scores.default_score);
-            @memset(self.x.getRow(0), scores.default_score);
+            self.m.fill(0);
+            self.x.fill(0);
+            self.m_skip.fill(true);
+            @memset(self.first_match_buffer[0..rows], 0);
+            @memset(self.traceback_buffer[0..cols], 0);
 
             for (1..rows) |i| {
                 if (first_match_indices.len <= i - 1) break;
@@ -302,8 +300,8 @@ pub fn Algorithm(
                 self.x.set(i, j, scores.default_score);
             }
 
-            @memset(self.role_bonus, 0);
-            @memset(self.bonus_buffer, 0);
+            @memset(self.role_bonus[0..cols], 0);
+            @memset(self.bonus_buffer[0..cols], 0);
         }
 
         fn findMaximalElement(

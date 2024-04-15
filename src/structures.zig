@@ -54,5 +54,19 @@ pub fn MatrixT(comptime T: type) type {
             const i = row * m.cols;
             return m.matrix[i .. i + m.cols];
         }
+
+        /// Resize the matrix without reallocating. Asserts that there is enough space.
+        pub fn resizeNoAlloc(m: *Self, new_rows: usize, new_cols: usize) void {
+            std.debug.assert(m.matrix.len >= new_rows * new_cols);
+
+            m.rows = new_rows;
+            m.cols = new_cols;
+        }
+
+        /// Set the currently active region of the matrix to a specific value.
+        pub fn fill(m: Self, value: ElementType) void {
+            const end = m.rows * m.cols;
+            @memset(m.matrix[0..end], value);
+        }
     };
 }
