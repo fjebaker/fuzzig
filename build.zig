@@ -4,11 +4,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    _ = b.addModule("fuzzig", .{ .root_source_file = .{ .path = "src/root.zig" } });
+    _ = b.addModule("fuzzig", .{ .root_source_file = b.path("src/root.zig") });
 
     const lib = b.addStaticLibrary(.{
         .name = "fuzzig",
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
