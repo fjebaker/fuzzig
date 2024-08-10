@@ -483,17 +483,17 @@ pub fn AlgorithmType(
     };
 }
 
-const AsciiImplementation = struct {
+pub const Ascii = struct {
     pub const Algorithm = AlgorithmType(u8, i32, .{});
     pub const Scores = ScoresType(i32);
 
-    const FunctionTable: Algorithm.FunctionTable(*AsciiImplementation) = .{
+    const FunctionTable: Algorithm.FunctionTable(*Ascii) = .{
         .score = scoreFunc,
         .bonus = bonusFunc,
         .isEqual = eqlFunc,
     };
 
-    fn eqlFunc(self: *AsciiImplementation, h: u8, n: u8) bool {
+    fn eqlFunc(self: *Ascii, h: u8, n: u8) bool {
         if (n == ' ' and self.opts.wildcard_spaces) {
             return switch (h) {
                 'a'...'z', 'A'...'Z', '0'...'9' => false,
@@ -507,7 +507,7 @@ const AsciiImplementation = struct {
     }
 
     fn scoreFunc(
-        a: *AsciiImplementation,
+        a: *Ascii,
         scores: Scores,
         h: u8,
         n: u8,
@@ -521,7 +521,7 @@ const AsciiImplementation = struct {
     }
 
     fn bonusFunc(
-        _: *AsciiImplementation,
+        _: *Ascii,
         scores: Scores,
         h: u8,
         n: u8,
@@ -557,24 +557,24 @@ const AsciiImplementation = struct {
         max_haystack: usize,
         max_needle: usize,
         opts: Options,
-    ) !AsciiImplementation {
+    ) !Ascii {
         const alg = try Algorithm.init(allocator, max_haystack, max_needle);
         return .{ .alg = alg, .opts = opts };
     }
 
-    pub fn deinit(self: *AsciiImplementation) void {
+    pub fn deinit(self: *Ascii) void {
         self.alg.deinit();
     }
 
     pub fn score(
-        self: *AsciiImplementation,
+        self: *Ascii,
         haystack: []const u8,
         needle: []const u8,
     ) ?i32 {
         return self.alg.score(self, FunctionTable, haystack, needle);
     }
     pub fn scoreMatches(
-        self: *AsciiImplementation,
+        self: *Ascii,
         haystack: []const u8,
         needle: []const u8,
     ) Algorithm.Matches {
@@ -582,17 +582,17 @@ const AsciiImplementation = struct {
     }
 };
 
-pub const UnicodeImplementation = struct {
+pub const Unicode = struct {
     pub const Algorithm = AlgorithmType(u21, i32, .{});
     pub const Scores = ScoresType(i32);
 
-    const FunctionTable: Algorithm.FunctionTable(*UnicodeImplementation) = .{
+    const FunctionTable: Algorithm.FunctionTable(*Unicode) = .{
         .score = scoreFunc,
         .bonus = bonusFunc,
         .isEqual = eqlFunc,
     };
 
-    fn eqlFunc(a: *UnicodeImplementation, h: u21, n: u21) bool {
+    fn eqlFunc(a: *Unicode, h: u21, n: u21) bool {
         const gcd = GenCatData.init(a.alg.allocator) catch @panic("Memory error");
         defer gcd.deinit();
         if (gcd.isSeparator(n) and a.opts.wildcard_spaces) {
@@ -611,7 +611,7 @@ pub const UnicodeImplementation = struct {
     }
 
     fn scoreFunc(
-        a: *UnicodeImplementation,
+        a: *Unicode,
         scores: Scores,
         h: u21,
         n: u21,
@@ -625,7 +625,7 @@ pub const UnicodeImplementation = struct {
     }
 
     fn bonusFunc(
-        self: *UnicodeImplementation,
+        self: *Unicode,
         scores: Scores,
         h: u21,
         n: u21,
@@ -641,7 +641,7 @@ pub const UnicodeImplementation = struct {
         };
     }
 
-    fn convertString(a: *const UnicodeImplementation, string: []const u8) []const u21 {
+    fn convertString(a: *const Unicode, string: []const u8) []const u21 {
         var norm_data: Normalize.NormData = undefined;
         Normalize.NormData.init(&norm_data, a.alg.allocator) catch @panic("Cannot normalize string");
         defer norm_data.deinit();
@@ -680,17 +680,17 @@ pub const UnicodeImplementation = struct {
         max_haystack: usize,
         max_needle: usize,
         opts: Options,
-    ) !UnicodeImplementation {
+    ) !Unicode {
         const alg = try Algorithm.init(allocator, max_haystack, max_needle);
         return .{ .alg = alg, .opts = opts };
     }
 
-    pub fn deinit(self: *UnicodeImplementation) void {
+    pub fn deinit(self: *Unicode) void {
         self.alg.deinit();
     }
 
     pub fn score(
-        self: *UnicodeImplementation,
+        self: *Unicode,
         haystack: []const u8,
         needle: []const u8,
     ) !?i32 {
@@ -707,7 +707,7 @@ pub const UnicodeImplementation = struct {
     }
 
     pub fn scoreMatches(
-        self: *UnicodeImplementation,
+        self: *Unicode,
         haystack: []const u8,
         needle: []const u8,
     ) !Algorithm.Matches {
@@ -724,34 +724,18 @@ pub const UnicodeImplementation = struct {
     }
 };
 
-/// Default ASCII Fuzzy Finder
-pub const Ascii = AsciiImplementation;
-pub const Unicode = UnicodeImplementation;
-
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
     const s = alg.score(haystack, needle);
-
-    // const stderr = std.io.getStdErr().writer();
-    // try alg.debugPrint(stderr, haystack, needle);
-    // std.debug.print("SCORE : {d}\n", .{s orelse -1});
-
     try std.testing.expectEqual(score, s.?);
 }
 
 fn doTestScoreUnicode(alg: *Unicode, haystack: []const u8, needle: []const u8, comptime score: ?i32) !void {
     const s = try alg.score(haystack, needle);
-
-    if (score == null) {
-        // const stderr = std.io.getStdErr().writer();
-        // try alg.debugPrint(stderr, haystack, needle);
-        std.debug.print("SCORE : {d}\n", .{s orelse -1});
-    } else {
-        try std.testing.expectEqual(score, s.?);
-    }
+    try std.testing.expectEqual(score, s.?);
 }
 
 test "algorithm test" {
-    const o = AsciiImplementation.Scores{};
+    const o = Ascii.Scores{};
 
     var alg = try Ascii.init(
         std.testing.allocator,
@@ -837,7 +821,7 @@ test "algorithm test" {
 }
 
 test "case sensitivity" {
-    const o = AsciiImplementation.Scores{};
+    const o = Ascii.Scores{};
 
     var alg1 = try Ascii.init(
         std.testing.allocator,
@@ -874,7 +858,7 @@ test "case sensitivity" {
     );
     defer alg2.deinit();
 
-    const A: AsciiImplementation.Options = .{};
+    const A: Ascii.Options = .{};
     try doTestScore(
         &alg2,
         "xaB",
@@ -885,7 +869,7 @@ test "case sensitivity" {
 }
 
 test "wildcard space" {
-    const o = AsciiImplementation.Scores{};
+    const o = Ascii.Scores{};
     var alg = try Ascii.init(
         std.testing.allocator,
         128,
@@ -945,7 +929,7 @@ test "traceback" {
 }
 
 test "Unicode search" {
-    const o = UnicodeImplementation.Scores{};
+    const o = Unicode.Scores{};
 
     var alg = try Unicode.init(
         std.testing.allocator,
