@@ -114,55 +114,93 @@ pub fn AlgorithmType(
 
         allocator: std.mem.Allocator,
 
+        impl: Impl,
+
+        initialised: bool,
+
+        const TypeOfCaracter = switch (Impl) {
+            AsciiOptions => u8,
+            UnicodeOptions => u21,
+            else => unreachable,
+        };
+
         pub fn deinit(self: *Self) void {
-            self.m.deinit();
-            self.x.deinit();
-            self.m_skip.deinit();
-            self.allocator.free(self.role_bonus);
-            self.allocator.free(self.bonus_buffer);
-            self.allocator.free(self.first_match_buffer);
-            self.allocator.free(self.traceback_buffer);
+            self.deallocateMatrixAndBuffer();
             self.* = undefined;
         }
 
         pub fn init(
             allocator: std.mem.Allocator,
+            impl: Impl,
+        ) !Self {
+            var impl_with_allocator = impl;
+            impl_with_allocator.allocator = allocator;
+
+            return .{
+                .m = undefined,
+                .x = undefined,
+                .m_skip = undefined,
+
+                .role_bonus = undefined,
+                .bonus_buffer = undefined,
+                .first_match_buffer = undefined,
+                .traceback_buffer = undefined,
+                .allocator = allocator,
+                .impl = impl_with_allocator,
+                .initialised = false,
+            };
+        }
+
+        fn allocateMatrixAndBuffer(
+            self: *Self,
             max_haystack: usize,
             max_needle: usize,
-        ) !Self {
+        ) !void {
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
 
-            var m = try Matrix.init(allocator, rows, cols);
+            var m = try Matrix.init(self.allocator, rows, cols);
             errdefer m.deinit();
-            var x = try Matrix.init(allocator, rows, cols);
+            var x = try Matrix.init(self.allocator, rows, cols);
             errdefer x.deinit();
-            var m_skip = try MatrixT(bool).init(allocator, rows, cols);
+            var m_skip = try MatrixT(bool).init(self.allocator, rows, cols);
             errdefer m_skip.deinit();
 
-            const role_bonus = try allocator.alloc(ScoreT, cols);
-            errdefer allocator.free(role_bonus);
+            const role_bonus = try self.allocator.alloc(ScoreT, cols);
+            errdefer self.allocator.free(role_bonus);
 
-            const bonus_buffer = try allocator.alloc(ScoreT, cols);
-            errdefer allocator.free(bonus_buffer);
+            const bonus_buffer = try self.allocator.alloc(ScoreT, cols);
+            errdefer self.allocator.free(bonus_buffer);
 
-            const first_match_buffer = try allocator.alloc(usize, rows);
-            errdefer allocator.free(first_match_buffer);
+            const first_match_buffer = try self.allocator.alloc(usize, rows);
+            errdefer self.allocator.free(first_match_buffer);
 
-            const traceback_buffer = try allocator.alloc(usize, cols);
-            errdefer allocator.free(traceback_buffer);
+            const traceback_buffer = try self.allocator.alloc(usize, cols);
+            errdefer self.allocator.free(traceback_buffer);
 
-            return .{
-                .m = m,
-                .x = x,
-                .m_skip = m_skip,
+            self.m = m;
+            self.x = x;
+            self.m_skip = m_skip;
 
-                .role_bonus = role_bonus,
-                .bonus_buffer = bonus_buffer,
-                .first_match_buffer = first_match_buffer,
-                .traceback_buffer = traceback_buffer,
-                .allocator = allocator,
-            };
+            self.role_bonus = role_bonus;
+            self.bonus_buffer = bonus_buffer;
+            self.first_match_buffer = first_match_buffer;
+            self.traceback_buffer = traceback_buffer;
+
+            self.initialised = true;
+        }
+
+        fn deallocateMatrixAndBuffer(self: *Self) void {
+            if (self.initialised) {
+                self.m.deinit();
+                self.x.deinit();
+                self.m_skip.deinit();
+                self.allocator.free(self.role_bonus);
+                self.allocator.free(self.bonus_buffer);
+                self.allocator.free(self.first_match_buffer);
+                self.allocator.free(self.traceback_buffer);
+            }
+            self.initialised = false;
         }
 
         /// Compute matching score
@@ -195,8 +233,18 @@ pub fn AlgorithmType(
                 .score = 0,
             };
 
-            const rows = needle.len;
-            const cols = haystack.len;
+            self.deallocateMatrixAndBuffer();
+
+            const haystack_normal = self.impl.convertString(haystack);
+            defer self.allocator.free(haystack_normal);
+
+            const needle_normal = self.impl.convertString(needle);
+            defer self.allocator.free(needle_normal);
+
+            const rows = needle_normal.len;
+            const cols = haystack_normal.len;
+
+            self.allocateMatrixAndBuffer(cols, rows) catch @panic("Memory error");
 
             // resize the view into memory
             self.m.resizeNoAlloc(rows + 1, cols + 1);
@@ -739,8 +787,6 @@ test "algorithm test" {
 
     var alg = try Ascii.init(
         std.testing.allocator,
-        128,
-        32,
         .{},
     );
     defer alg.deinit();
@@ -825,8 +871,6 @@ test "case sensitivity" {
 
     var alg1 = try Ascii.init(
         std.testing.allocator,
-        128,
-        32,
         .{ .case_sensitive = false },
     );
     defer alg1.deinit();
@@ -849,8 +893,6 @@ test "case sensitivity" {
 
     var alg2 = try Ascii.init(
         std.testing.allocator,
-        128,
-        32,
         .{
             .case_sensitive = false,
             .case_penalize = true,
@@ -872,8 +914,6 @@ test "wildcard space" {
     const o = Ascii.Scores{};
     var alg = try Ascii.init(
         std.testing.allocator,
-        128,
-        32,
         .{ .wildcard_spaces = true },
     );
     defer alg.deinit();
@@ -915,8 +955,6 @@ fn doTestTraceback(alg: *Ascii, haystack: []const u8, needle: []const u8, compti
 test "traceback" {
     var alg = try Ascii.init(
         std.testing.allocator,
-        64,
-        32,
         .{},
     );
     defer alg.deinit();
@@ -933,8 +971,6 @@ test "Unicode search" {
 
     var alg = try Unicode.init(
         std.testing.allocator,
-        128,
-        32,
         .{},
     );
     defer alg.deinit();
