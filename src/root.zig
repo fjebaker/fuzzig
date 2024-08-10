@@ -593,18 +593,14 @@ pub const Unicode = struct {
     };
 
     fn eqlFunc(a: *Unicode, h: u21, n: u21) bool {
-        const gcd = GenCatData.init(a.alg.allocator) catch @panic("Memory error");
-        defer gcd.deinit();
-        if (gcd.isSeparator(n) and a.opts.wildcard_spaces) {
-            if (gcd.isLetter(h) or gcd.isNumber(h) or gcd.isSymbol(h)) {
+        if (a.gcd.isSeparator(n) and a.opts.wildcard_spaces) {
+            if (a.gcd.isLetter(h) or a.gcd.isNumber(h) or a.gcd.isSymbol(h)) {
                 return true;
             } else {
                 return false;
             }
         } else if (!a.opts.case_sensitive) {
-            const cd = CaseData.init(a.alg.allocator) catch @panic("Memory error");
-            defer cd.deinit();
-            return cd.toLower(h) == cd.toLower(n);
+            return a.cd.toLower(h) == a.cd.toLower(n);
         } else {
             return h == n;
         }
@@ -630,8 +626,9 @@ pub const Unicode = struct {
         h: u21,
         n: u21,
     ) i32 {
-        const p = CharacterType.fromUnicode(h, self.alg.allocator);
-        const c = CharacterType.fromUnicode(n, self.alg.allocator);
+        const alloc = self.alg.allocator;
+        const p = CharacterType.fromUnicode(h, alloc);
+        const c = CharacterType.fromUnicode(n, alloc);
 
         return switch (p.roleNextTo(c)) {
             .Head => scores.bonus_head,
@@ -641,14 +638,14 @@ pub const Unicode = struct {
         };
     }
 
-    fn convertString(a: *const Unicode, string: []const u8) []const u21 {
+    fn convertString(a: *const Unicode, string: []const u8) ![]const u21 {
         var norm_data: Normalize.NormData = undefined;
-        Normalize.NormData.init(&norm_data, a.alg.allocator) catch @panic("Cannot normalize string");
+        try Normalize.NormData.init(&norm_data, a.alg.allocator);
         defer norm_data.deinit();
 
         const n = Normalize{ .norm_data = &norm_data };
 
-        const nfc_result = n.nfc(a.alg.allocator, string) catch @panic("Cannot normalize string");
+        const nfc_result = try n.nfc(a.alg.allocator, string);
         defer nfc_result.deinit();
 
         var iter = code_point.Iterator{ .bytes = nfc_result.slice };
@@ -657,9 +654,9 @@ pub const Unicode = struct {
         defer converted_string.deinit();
 
         while (iter.next()) |c| {
-            converted_string.append(c.code) catch @panic("Memory error");
+            try converted_string.append(c.code);
         }
-        return converted_string.toOwnedSlice() catch @panic("Memory error");
+        return converted_string.toOwnedSlice();
     }
 
     pub const Options = struct {
@@ -670,10 +667,14 @@ pub const Unicode = struct {
         wildcard_spaces: bool = false,
 
         penalty_case_mistmatch: i32 = -2,
+
+        char_buffer_size: usize = 8192,
     };
 
     alg: Algorithm,
     opts: Options,
+    gcd: GenCatData,
+    cd: CaseData,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -681,11 +682,27 @@ pub const Unicode = struct {
         max_needle: usize,
         opts: Options,
     ) !Unicode {
+        // todo: these can likely be a static singleton that is shared amongst
+        // all instances of the Unicode fuzzy finder
+        var gcd = try GenCatData.init(allocator);
+        errdefer gcd.deinit();
+
+        var cd = try CaseData.init(allocator);
+        errdefer cd.deinit();
+
         const alg = try Algorithm.init(allocator, max_haystack, max_needle);
-        return .{ .alg = alg, .opts = opts };
+
+        return .{
+            .alg = alg,
+            .opts = opts,
+            .gcd = gcd,
+            .cd = cd,
+        };
     }
 
     pub fn deinit(self: *Unicode) void {
+        self.gcd.deinit();
+        self.cd.deinit();
         self.alg.deinit();
     }
 
@@ -694,10 +711,12 @@ pub const Unicode = struct {
         haystack: []const u8,
         needle: []const u8,
     ) !?i32 {
-        const haystack_normal = self.convertString(haystack);
+        const haystack_normal = try self.convertString(haystack);
         defer self.alg.allocator.free(haystack_normal);
-        const needle_normal = self.convertString(needle);
+
+        const needle_normal = try self.convertString(needle);
         defer self.alg.allocator.free(needle_normal);
+
         return self.alg.score(
             self,
             FunctionTable,
