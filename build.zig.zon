@@ -38,6 +38,10 @@
         //    // computed. This field and `url` are mutually exclusive.
         //    .path = "foo",
         //},
+        .zg = .{
+            .url = "https://codeberg.org/dude_the_builder/zg/archive/v0.13.2.tar.gz",
+            .hash = "122055beff332830a391e9895c044d33b15ea21063779557024b46169fb1984c6e40",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.
