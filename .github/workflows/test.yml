@@ -1,0 +1,25 @@
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - main
+      - unicode
+  push:
+    branches:
+      - main
+      - ci
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Build and test
+        run: zig build test
+
