@@ -118,12 +118,6 @@ pub fn AlgorithmType(
 
         initialised: bool,
 
-        const TypeOfCaracter = switch (Impl) {
-            AsciiOptions => u8,
-            UnicodeOptions => u21,
-            else => unreachable,
-        };
-
         pub fn deinit(self: *Self) void {
             self.deallocateMatrixAndBuffer();
             self.* = undefined;
@@ -479,8 +473,8 @@ pub fn AlgorithmType(
         fn debugPrint(
             self: *const Self,
             writer: anytype,
-            haystack: []const ElType,
-            needle: []const ElType,
+            haystack: []const u8,
+            needle: []const u8,
         ) !void {
             const el_width = bonus: {
                 var max_digits: usize = 1;
@@ -546,8 +540,11 @@ pub const Ascii = struct {
 
     penalty_case_mistmatch: i32 = -2,
 
-    fn convertString(_: *const AsciiOptions, string: []const u8, allocator: Allocator) []const TypeOfCharacter {
-        return allocator.dupe(TypeOfCharacter, string) catch @panic("Memory error");
+    alg: Algorithm,
+    opts: Options,
+
+    fn convertString(_: *const Ascii, string: []const u8, allocator: Allocator) []const u8 {
+        return allocator.dupe(u8, string) catch @panic("Memory error");
     }
 
     fn eqlFunc(self: *Ascii, h: u8, n: u8) bool {
@@ -604,9 +601,6 @@ pub const Ascii = struct {
 
         penalty_case_mistmatch: i32 = -2,
     };
-
-    alg: Algorithm,
-    opts: Options,
 
     // public interface
 
@@ -688,7 +682,6 @@ pub const Unicode = struct {
         scores: Scores,
         h: u21,
         n: u21,
-        allocator: Allocator,
     ) i32 {
         const p = CharacterType.fromUnicode(h, self.alg.allocator);
         const c = CharacterType.fromUnicode(n, self.alg.allocator);
