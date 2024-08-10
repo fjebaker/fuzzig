@@ -81,11 +81,20 @@ pub fn Algorithm(
     comptime ElType: type,
     comptime ScoreT: type,
     comptime scores: Scores(ScoreT),
-    comptime Impl: type,
 ) type {
     return struct {
         const Matrix = MatrixT(ScoreT);
         const Self = @This();
+
+        fn FunctionTable(
+            comptime Ctx: type,
+        ) type {
+            return struct {
+                isEqual: fn (Ctx, ElType, ElType) bool,
+                bonus: fn (Ctx, Scores(ScoreT), ElType, ElType) ScoreT,
+                score: fn (Ctx, Scores(ScoreT), ElType, ElType) ?ScoreT,
+            };
+        }
 
         // Scoring matrix
         m: Matrix,
@@ -105,14 +114,6 @@ pub fn Algorithm(
 
         allocator: std.mem.Allocator,
 
-        impl: Impl,
-
-        const TypeOfCaracter = switch (Impl) {
-            AsciiOptions => u8,
-            UnicodeOptions => u21,
-            else => unreachable,
-        };
-
         pub fn deinit(self: *Self) void {
             self.m.deinit();
             self.x.deinit();
@@ -128,11 +129,7 @@ pub fn Algorithm(
             allocator: std.mem.Allocator,
             max_haystack: usize,
             max_needle: usize,
-            impl: Impl,
         ) !Self {
-            var impl_with_allocator = impl;
-            impl_with_allocator.allocator = allocator;
-
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
 
@@ -165,17 +162,18 @@ pub fn Algorithm(
                 .first_match_buffer = first_match_buffer,
                 .traceback_buffer = traceback_buffer,
                 .allocator = allocator,
-                .impl = impl_with_allocator,
             };
         }
 
         /// Compute matching score
         pub fn score(
             self: *Self,
+            ctx: anytype,
+            funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
         ) ?ScoreT {
-            const info = self.scoreImpl(haystack, needle) orelse
+            const info = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return null;
             return info.score;
         }
@@ -188,6 +186,8 @@ pub fn Algorithm(
 
         fn scoreImpl(
             self: *Self,
+            ctx: anytype,
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
         ) ?ScoreInfo {
@@ -195,14 +195,8 @@ pub fn Algorithm(
                 .score = 0,
             };
 
-            const haystack_normal = self.impl.convertString(haystack);
-            defer self.allocator.free(haystack_normal);
-
-            const needle_normal = self.impl.convertString(needle);
-            defer self.allocator.free(needle_normal);
-
-            const rows = needle_normal.len;
-            const cols = haystack_normal.len;
+            const rows = needle.len;
+            const cols = haystack.len;
 
             // resize the view into memory
             self.m.resizeNoAlloc(rows + 1, cols + 1);
@@ -210,25 +204,31 @@ pub fn Algorithm(
             self.m_skip.resizeNoAlloc(rows + 1, cols + 1);
 
             const first_match_indices = utils.firstMatchesGeneric(
-                TypeOfCaracter,
-                &self.impl,
-                Impl.eqlFunc,
+                ElType,
+                ctx,
+                funcTable.isEqual,
                 self.first_match_buffer,
-                haystack_normal,
-                needle_normal,
+                haystack,
+                needle,
             ) orelse return null;
 
             self.reset(rows + 1, cols + 1, first_match_indices);
-            self.determineBonuses(TypeOfCaracter, haystack_normal);
+            self.determineBonuses(ctx, funcTable, haystack);
 
-            try self.populateMatrices(haystack_normal, needle_normal, first_match_indices);
+            try self.populateMatrices(
+                ctx,
+                funcTable,
+                haystack,
+                needle,
+                first_match_indices,
+            );
             const col_max = self.findMaximalElement(
                 first_match_indices,
                 rows,
                 cols,
             );
 
-            const last_row_index = needle_normal.len;
+            const last_row_index = needle.len;
             const s = self.m.get(last_row_index, col_max);
             return .{
                 .score = s,
@@ -245,10 +245,12 @@ pub fn Algorithm(
         /// Compute the score and the indices of the matched characters
         pub fn scoreMatches(
             self: *Self,
-            haystack: []const u8,
-            needle: []const u8,
+            ctx: anytype,
+            funcTable: FunctionTable(@TypeOf(ctx)),
+            haystack: []const ElType,
+            needle: []const ElType,
         ) Matches {
-            const s = self.scoreImpl(haystack, needle) orelse
+            const s = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return .{ .score = null };
 
             const matches = self.traceback(
@@ -290,10 +292,15 @@ pub fn Algorithm(
             return buf;
         }
 
-        fn determineBonuses(self: *Self, T: type, haystack: []const T) void {
-            var prev: T = 0;
+        fn determineBonuses(
+            self: *Self,
+            ctx: anytype,
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
+            haystack: []const ElType,
+        ) void {
+            var prev: ElType = 0;
             for (1.., haystack) |i, h| {
-                self.role_bonus[i] = Impl.bonusFunc(&self.impl, scores, prev, h);
+                self.role_bonus[i] = funcTable.bonus(ctx, scores, prev, h);
                 prev = h;
             }
 
@@ -347,8 +354,10 @@ pub fn Algorithm(
 
         fn populateMatrices(
             self: *Self,
-            haystack: []const TypeOfCaracter,
-            needle: []const TypeOfCaracter,
+            ctx: anytype,
+            funcTable: FunctionTable(@TypeOf(ctx)),
+            haystack: []const ElType,
+            needle: []const ElType,
             first_match_indices: []const usize,
         ) !void {
             for (1.., needle) |i, n| {
@@ -362,7 +371,7 @@ pub fn Algorithm(
                     // start by updating the M matrix
 
                     // compute score
-                    if (Impl.scoreFunc(&self.impl, scores, h, n)) |current| {
+                    if (funcTable.score(ctx, scores, h, n)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -474,33 +483,22 @@ pub fn Algorithm(
     };
 }
 
-pub const AsciiOptions = struct {
-    const AsciiScores = Scores(i32);
+const AsciiImplementation = struct {
+    const AlgorithmT = Algorithm(u8, i32, .{});
+    pub const ScoresT = Scores(i32);
+    const FunctionTable: AlgorithmT.FunctionTable(*AsciiImplementation) = .{
+        .score = scoreFunc,
+        .bonus = bonusFunc,
+        .isEqual = eqlFunc,
+    };
 
-    pub const TypeOfCharacter = u8;
-
-    case_sensitive: bool = true,
-    case_penalize: bool = false,
-    // treat spaces as wildcards for any kind of boundary
-    // i.e. match with any `[^a-z,A-Z,0-9]`
-    wildcard_spaces: bool = false,
-
-    penalty_case_mistmatch: i32 = -2,
-
-    /// Don't forget the allocator !!!
-    allocator: Allocator = undefined,
-
-    fn convertString(a: *const AsciiOptions, string: []const u8) []const TypeOfCharacter {
-        return a.allocator.dupe(TypeOfCharacter, string) catch @panic("Memory error");
-    }
-
-    fn eqlFunc(a: *const AsciiOptions, h: u8, n: u8) bool {
-        if (n == ' ' and a.wildcard_spaces) {
+    fn eqlFunc(self: *AsciiImplementation, h: u8, n: u8) bool {
+        if (n == ' ' and self.opts.wildcard_spaces) {
             return switch (h) {
                 'a'...'z', 'A'...'Z', '0'...'9' => false,
                 else => true,
             };
-        } else if (!a.case_sensitive) {
+        } else if (!self.opts.case_sensitive) {
             return std.ascii.toLower(h) == std.ascii.toLower(n);
         } else {
             return h == n;
@@ -508,22 +506,22 @@ pub const AsciiOptions = struct {
     }
 
     fn scoreFunc(
-        a: *const AsciiOptions,
-        comptime scores: AsciiScores,
+        a: *AsciiImplementation,
+        scores: ScoresT,
         h: u8,
         n: u8,
     ) ?i32 {
         if (!a.eqlFunc(h, n)) return null;
 
-        if (a.case_penalize and (h != n)) {
-            return scores.score_match + a.penalty_case_mistmatch;
+        if (a.opts.case_penalize and (h != n)) {
+            return scores.score_match + a.opts.penalty_case_mistmatch;
         }
         return scores.score_match;
     }
 
     fn bonusFunc(
-        _: *const AsciiOptions,
-        comptime scores: AsciiScores,
+        _: *AsciiImplementation,
+        scores: ScoresT,
         h: u8,
         n: u8,
     ) i32 {
@@ -537,56 +535,72 @@ pub const AsciiOptions = struct {
             .Tail => scores.bonus_tail,
         };
     }
-};
 
-pub const UnicodeOptions = struct {
-    const UnicodeScores = Scores(i32);
+    pub const Options = struct {
+        case_sensitive: bool = true,
+        case_penalize: bool = false,
+        // treat spaces as wildcards for any kind of boundary
+        // i.e. match with any `[^a-z,A-Z,0-9]`
+        wildcard_spaces: bool = false,
 
-    pub const TypeOfCharacter: type = u21;
+        penalty_case_mistmatch: i32 = -2,
+    };
 
-    case_sensitive: bool = true,
-    case_penalize: bool = false,
-    // treat spaces as wildcards for any kind of boundary
-    // i.e. match with any `[^a-z,A-Z,0-9]`
-    wildcard_spaces: bool = false,
+    alg: AlgorithmT,
+    opts: Options,
 
-    penalty_case_mistmatch: i32 = -2,
+    // public interface
 
-    /// Don't forget the allocator !!!
-    allocator: Allocator = undefined,
-
-    fn convertString(a: *const UnicodeOptions, string: []const u8) []const TypeOfCharacter {
-        var norm_data: Normalize.NormData = undefined;
-        Normalize.NormData.init(&norm_data, a.allocator) catch @panic("Cannot normalize string");
-        defer norm_data.deinit();
-
-        const n = Normalize{ .norm_data = &norm_data };
-
-        const nfc_result = n.nfc(a.allocator, string) catch @panic("Cannot normalize string");
-        defer nfc_result.deinit();
-
-        var iter = code_point.Iterator{ .bytes = nfc_result.slice };
-
-        var converted_string = std.ArrayList(TypeOfCharacter).init(a.allocator);
-        defer converted_string.deinit();
-
-        while (iter.next()) |c| {
-            converted_string.append(c.code) catch @panic("Memory error");
-        }
-        return converted_string.toOwnedSlice() catch @panic("Memory error");
+    pub fn init(
+        allocator: std.mem.Allocator,
+        max_haystack: usize,
+        max_needle: usize,
+        opts: Options,
+    ) !AsciiImplementation {
+        const alg = try AlgorithmT.init(allocator, max_haystack, max_needle);
+        return .{ .alg = alg, .opts = opts };
     }
 
-    fn eqlFunc(a: *const UnicodeOptions, h: u21, n: u21) bool {
-        const gcd = GenCatData.init(a.allocator) catch @panic("Memory error");
+    pub fn deinit(self: *AsciiImplementation) void {
+        self.alg.deinit();
+    }
+
+    pub fn score(
+        self: *AsciiImplementation,
+        haystack: []const u8,
+        needle: []const u8,
+    ) ?i32 {
+        return self.alg.score(self, FunctionTable, haystack, needle);
+    }
+    pub fn scoreMatches(
+        self: *AsciiImplementation,
+        haystack: []const u8,
+        needle: []const u8,
+    ) AlgorithmT.Matches {
+        return self.alg.scoreMatches(self, FunctionTable, haystack, needle);
+    }
+};
+
+pub const UnicodeImplementation = struct {
+    const AlgorithmT = Algorithm(u21, i32, .{});
+    const UnicodeScores = Scores(i32);
+    const FunctionTable: AlgorithmT.FunctionTable(*UnicodeImplementation) = .{
+        .score = scoreFunc,
+        .bonus = bonusFunc,
+        .isEqual = eqlFunc,
+    };
+
+    fn eqlFunc(a: *UnicodeImplementation, h: u21, n: u21) bool {
+        const gcd = GenCatData.init(a.alg.allocator) catch @panic("Memory error");
         defer gcd.deinit();
-        if (gcd.isSeparator(n) and a.wildcard_spaces) {
+        if (gcd.isSeparator(n) and a.opts.wildcard_spaces) {
             if (gcd.isLetter(h) or gcd.isNumber(h) or gcd.isSymbol(h)) {
                 return true;
             } else {
                 return false;
             }
-        } else if (!a.case_sensitive) {
-            const cd = CaseData.init(a.allocator) catch @panic("Memory error");
+        } else if (!a.opts.case_sensitive) {
+            const cd = CaseData.init(a.alg.allocator) catch @panic("Memory error");
             defer cd.deinit();
             return cd.toLower(h) == cd.toLower(n);
         } else {
@@ -595,27 +609,27 @@ pub const UnicodeOptions = struct {
     }
 
     fn scoreFunc(
-        a: *const UnicodeOptions,
-        comptime scores: UnicodeScores,
+        a: *UnicodeImplementation,
+        scores: UnicodeScores,
         h: u21,
         n: u21,
     ) ?i32 {
         if (!a.eqlFunc(h, n)) return null;
 
-        if (a.case_penalize and (h != n)) {
-            return scores.score_match + a.penalty_case_mistmatch;
+        if (a.opts.case_penalize and (h != n)) {
+            return scores.score_match + a.opts.penalty_case_mistmatch;
         }
         return scores.score_match;
     }
 
     fn bonusFunc(
-        self: *const UnicodeOptions,
-        comptime scores: UnicodeScores,
+        self: *UnicodeImplementation,
+        scores: UnicodeScores,
         h: u21,
         n: u21,
     ) i32 {
-        const p = CharacterType.fromUnicode(h, self.allocator);
-        const c = CharacterType.fromUnicode(n, self.allocator);
+        const p = CharacterType.fromUnicode(h, self.alg.allocator);
+        const c = CharacterType.fromUnicode(n, self.alg.allocator);
 
         return switch (p.roleNextTo(c)) {
             .Head => scores.bonus_head,
@@ -624,12 +638,93 @@ pub const UnicodeOptions = struct {
             .Tail => scores.bonus_tail,
         };
     }
+
+    fn convertString(a: *const UnicodeImplementation, string: []const u8) []const u21 {
+        var norm_data: Normalize.NormData = undefined;
+        Normalize.NormData.init(&norm_data, a.alg.allocator) catch @panic("Cannot normalize string");
+        defer norm_data.deinit();
+
+        const n = Normalize{ .norm_data = &norm_data };
+
+        const nfc_result = n.nfc(a.alg.allocator, string) catch @panic("Cannot normalize string");
+        defer nfc_result.deinit();
+
+        var iter = code_point.Iterator{ .bytes = nfc_result.slice };
+
+        var converted_string = std.ArrayList(u21).init(a.alg.allocator);
+        defer converted_string.deinit();
+
+        while (iter.next()) |c| {
+            converted_string.append(c.code) catch @panic("Memory error");
+        }
+        return converted_string.toOwnedSlice() catch @panic("Memory error");
+    }
+
+    pub const Options = struct {
+        case_sensitive: bool = true,
+        case_penalize: bool = false,
+        // treat spaces as wildcards for any kind of boundary
+        // i.e. match with any `[^a-z,A-Z,0-9]`
+        wildcard_spaces: bool = false,
+
+        penalty_case_mistmatch: i32 = -2,
+    };
+
+    alg: AlgorithmT,
+    opts: Options,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        max_haystack: usize,
+        max_needle: usize,
+        opts: Options,
+    ) !UnicodeImplementation {
+        const alg = try AlgorithmT.init(allocator, max_haystack, max_needle);
+        return .{ .alg = alg, .opts = opts };
+    }
+
+    pub fn deinit(self: *UnicodeImplementation) void {
+        self.alg.deinit();
+    }
+
+    pub fn score(
+        self: *UnicodeImplementation,
+        haystack: []const u8,
+        needle: []const u8,
+    ) !?i32 {
+        const haystack_normal = self.convertString(haystack);
+        defer self.alg.allocator.free(haystack_normal);
+        const needle_normal = self.convertString(needle);
+        defer self.alg.allocator.free(needle_normal);
+        return self.alg.score(
+            self,
+            FunctionTable,
+            haystack_normal,
+            needle_normal,
+        );
+    }
+
+    pub fn scoreMatches(
+        self: *UnicodeImplementation,
+        haystack: []const u8,
+        needle: []const u8,
+    ) !AlgorithmT.Matches {
+        const haystack_normal = self.convertString(haystack);
+        defer self.allocator.free(haystack_normal);
+        const needle_normal = self.convertString(needle);
+        defer self.allocator.free(needle_normal);
+        return self.alg.scoreMatches(
+            self,
+            FunctionTable,
+            haystack_normal,
+            needle_normal,
+        );
+    }
 };
 
 /// Default ASCII Fuzzy Finder
-pub const Ascii = Algorithm(u8, i32, .{}, AsciiOptions);
-
-pub const Unicode = Algorithm(u8, i32, .{}, UnicodeOptions);
+pub const Ascii = AsciiImplementation;
+pub const Unicode = UnicodeImplementation;
 
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
     const s = alg.score(haystack, needle);
@@ -642,7 +737,7 @@ fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime s
 }
 
 fn doTestScoreUnicode(alg: *Unicode, haystack: []const u8, needle: []const u8, comptime score: ?i32) !void {
-    const s = alg.score(haystack, needle);
+    const s = try alg.score(haystack, needle);
 
     if (score == null) {
         // const stderr = std.io.getStdErr().writer();
@@ -654,7 +749,7 @@ fn doTestScoreUnicode(alg: *Unicode, haystack: []const u8, needle: []const u8, c
 }
 
 test "algorithm test" {
-    const o = AsciiOptions.AsciiScores{};
+    const o = AsciiImplementation.ScoresT{};
 
     var alg = try Ascii.init(
         std.testing.allocator,
@@ -740,7 +835,7 @@ test "algorithm test" {
 }
 
 test "case sensitivity" {
-    const o = AsciiOptions.AsciiScores{};
+    const o = AsciiImplementation.ScoresT{};
 
     var alg1 = try Ascii.init(
         std.testing.allocator,
@@ -777,7 +872,7 @@ test "case sensitivity" {
     );
     defer alg2.deinit();
 
-    const A: AsciiOptions = .{};
+    const A: AsciiImplementation.Options = .{};
     try doTestScore(
         &alg2,
         "xaB",
@@ -788,7 +883,7 @@ test "case sensitivity" {
 }
 
 test "wildcard space" {
-    const o = AsciiOptions.AsciiScores{};
+    const o = AsciiImplementation.ScoresT{};
     var alg = try Ascii.init(
         std.testing.allocator,
         128,
@@ -848,7 +943,7 @@ test "traceback" {
 }
 
 test "Unicode search" {
-    const o = UnicodeOptions.UnicodeScores{};
+    const o = UnicodeImplementation.UnicodeScores{};
 
     var alg = try Unicode.init(
         std.testing.allocator,
