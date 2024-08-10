@@ -1,0 +1,32 @@
+# This file is for zig-specific build artifacts.
+
+.zig-cache/
+zig-out/
+build/
+build-*/
+docgen_tmp/
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+*.elf
+*.ko
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
