@@ -58,7 +58,7 @@ const MatrixT = structures.MatrixT;
 //
 // The algorithm is now O(mn).
 
-pub fn Scores(comptime ScoreT: type) type {
+pub fn ScoresType(comptime ScoreT: type) type {
     return struct {
         score_match: ScoreT = 16,
         score_gap_start: ScoreT = -3,
@@ -77,10 +77,10 @@ pub fn Scores(comptime ScoreT: type) type {
     };
 }
 
-pub fn Algorithm(
+pub fn AlgorithmType(
     comptime ElType: type,
     comptime ScoreT: type,
-    comptime scores: Scores(ScoreT),
+    comptime scores: ScoresType(ScoreT),
 ) type {
     return struct {
         const Matrix = MatrixT(ScoreT);
@@ -91,8 +91,8 @@ pub fn Algorithm(
         ) type {
             return struct {
                 isEqual: fn (Ctx, ElType, ElType) bool,
-                bonus: fn (Ctx, Scores(ScoreT), ElType, ElType) ScoreT,
-                score: fn (Ctx, Scores(ScoreT), ElType, ElType) ?ScoreT,
+                bonus: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ScoreT,
+                score: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ?ScoreT,
             };
         }
 
@@ -169,7 +169,7 @@ pub fn Algorithm(
         pub fn score(
             self: *Self,
             ctx: anytype,
-            funcTable: FunctionTable(@TypeOf(ctx)),
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
         ) ?ScoreT {
@@ -246,7 +246,7 @@ pub fn Algorithm(
         pub fn scoreMatches(
             self: *Self,
             ctx: anytype,
-            funcTable: FunctionTable(@TypeOf(ctx)),
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
         ) Matches {
@@ -355,7 +355,7 @@ pub fn Algorithm(
         fn populateMatrices(
             self: *Self,
             ctx: anytype,
-            funcTable: FunctionTable(@TypeOf(ctx)),
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
             first_match_indices: []const usize,
@@ -484,9 +484,10 @@ pub fn Algorithm(
 }
 
 const AsciiImplementation = struct {
-    const AlgorithmT = Algorithm(u8, i32, .{});
-    pub const ScoresT = Scores(i32);
-    const FunctionTable: AlgorithmT.FunctionTable(*AsciiImplementation) = .{
+    pub const Algorithm = AlgorithmType(u8, i32, .{});
+    pub const Scores = ScoresType(i32);
+
+    const FunctionTable: Algorithm.FunctionTable(*AsciiImplementation) = .{
         .score = scoreFunc,
         .bonus = bonusFunc,
         .isEqual = eqlFunc,
@@ -507,7 +508,7 @@ const AsciiImplementation = struct {
 
     fn scoreFunc(
         a: *AsciiImplementation,
-        scores: ScoresT,
+        scores: Scores,
         h: u8,
         n: u8,
     ) ?i32 {
@@ -521,7 +522,7 @@ const AsciiImplementation = struct {
 
     fn bonusFunc(
         _: *AsciiImplementation,
-        scores: ScoresT,
+        scores: Scores,
         h: u8,
         n: u8,
     ) i32 {
@@ -546,7 +547,7 @@ const AsciiImplementation = struct {
         penalty_case_mistmatch: i32 = -2,
     };
 
-    alg: AlgorithmT,
+    alg: Algorithm,
     opts: Options,
 
     // public interface
@@ -557,7 +558,7 @@ const AsciiImplementation = struct {
         max_needle: usize,
         opts: Options,
     ) !AsciiImplementation {
-        const alg = try AlgorithmT.init(allocator, max_haystack, max_needle);
+        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
         return .{ .alg = alg, .opts = opts };
     }
 
@@ -576,15 +577,16 @@ const AsciiImplementation = struct {
         self: *AsciiImplementation,
         haystack: []const u8,
         needle: []const u8,
-    ) AlgorithmT.Matches {
+    ) Algorithm.Matches {
         return self.alg.scoreMatches(self, FunctionTable, haystack, needle);
     }
 };
 
 pub const UnicodeImplementation = struct {
-    const AlgorithmT = Algorithm(u21, i32, .{});
-    const UnicodeScores = Scores(i32);
-    const FunctionTable: AlgorithmT.FunctionTable(*UnicodeImplementation) = .{
+    pub const Algorithm = AlgorithmType(u21, i32, .{});
+    pub const Scores = ScoresType(i32);
+
+    const FunctionTable: Algorithm.FunctionTable(*UnicodeImplementation) = .{
         .score = scoreFunc,
         .bonus = bonusFunc,
         .isEqual = eqlFunc,
@@ -610,7 +612,7 @@ pub const UnicodeImplementation = struct {
 
     fn scoreFunc(
         a: *UnicodeImplementation,
-        scores: UnicodeScores,
+        scores: Scores,
         h: u21,
         n: u21,
     ) ?i32 {
@@ -624,7 +626,7 @@ pub const UnicodeImplementation = struct {
 
     fn bonusFunc(
         self: *UnicodeImplementation,
-        scores: UnicodeScores,
+        scores: Scores,
         h: u21,
         n: u21,
     ) i32 {
@@ -670,7 +672,7 @@ pub const UnicodeImplementation = struct {
         penalty_case_mistmatch: i32 = -2,
     };
 
-    alg: AlgorithmT,
+    alg: Algorithm,
     opts: Options,
 
     pub fn init(
@@ -679,7 +681,7 @@ pub const UnicodeImplementation = struct {
         max_needle: usize,
         opts: Options,
     ) !UnicodeImplementation {
-        const alg = try AlgorithmT.init(allocator, max_haystack, max_needle);
+        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
         return .{ .alg = alg, .opts = opts };
     }
 
@@ -708,7 +710,7 @@ pub const UnicodeImplementation = struct {
         self: *UnicodeImplementation,
         haystack: []const u8,
         needle: []const u8,
-    ) !AlgorithmT.Matches {
+    ) !Algorithm.Matches {
         const haystack_normal = self.convertString(haystack);
         defer self.allocator.free(haystack_normal);
         const needle_normal = self.convertString(needle);
@@ -749,7 +751,7 @@ fn doTestScoreUnicode(alg: *Unicode, haystack: []const u8, needle: []const u8, c
 }
 
 test "algorithm test" {
-    const o = AsciiImplementation.ScoresT{};
+    const o = AsciiImplementation.Scores{};
 
     var alg = try Ascii.init(
         std.testing.allocator,
@@ -835,7 +837,7 @@ test "algorithm test" {
 }
 
 test "case sensitivity" {
-    const o = AsciiImplementation.ScoresT{};
+    const o = AsciiImplementation.Scores{};
 
     var alg1 = try Ascii.init(
         std.testing.allocator,
@@ -883,7 +885,7 @@ test "case sensitivity" {
 }
 
 test "wildcard space" {
-    const o = AsciiImplementation.ScoresT{};
+    const o = AsciiImplementation.Scores{};
     var alg = try Ascii.init(
         std.testing.allocator,
         128,
@@ -943,7 +945,7 @@ test "traceback" {
 }
 
 test "Unicode search" {
-    const o = UnicodeImplementation.UnicodeScores{};
+    const o = UnicodeImplementation.Scores{};
 
     var alg = try Unicode.init(
         std.testing.allocator,
