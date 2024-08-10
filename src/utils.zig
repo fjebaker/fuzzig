@@ -3,6 +3,8 @@ const std = @import("std");
 const GenCatData = @import("GenCatData");
 const CaseData = @import("CaseData");
 
+const UnicodeToolBox = @import("root.zig").UnicodeToolBox;
+
 pub fn digitCount(v: anytype) usize {
     const abs: u32 = @intCast(@abs(v));
     if (abs == 0) return 1;
@@ -32,27 +34,23 @@ pub const CharacterType = enum {
         };
     }
 
-    pub fn fromUnicode(c: u21, allocator: std.mem.Allocator) CharacterType {
-        const cd = CaseData.init(allocator) catch @panic("Memory error");
-        defer cd.deinit();
-        const gcd = GenCatData.init(allocator) catch @panic("Memory error");
-        defer gcd.deinit();
-        if (cd.isLower(c)) {
+    pub fn fromUnicode(c: u21, unicode_toolbox: UnicodeToolBox) CharacterType {
+        if (unicode_toolbox.cd.isLower(c)) {
             return .Lower;
-        } else if (cd.isUpper(c)) {
+        } else if (unicode_toolbox.cd.isUpper(c)) {
             return .Upper;
-        } else if (gcd.isNumber(c)) {
+        } else if (unicode_toolbox.gcd.isNumber(c)) {
             return .Number;
         } else if (switch (c) {
             ' ', '\\', '/', '|', '(', ')', '[', ']', '{', '}' => true,
             else => false,
         }) {
             return .HardSeperator;
-        } else if (gcd.isSeparator(c)) {
+        } else if (unicode_toolbox.gcd.isSeparator(c)) {
             return .HardSeperator;
-        } else if (gcd.isPunctuation(c) or gcd.isSymbol(c) or gcd.isMark(c)) {
+        } else if (unicode_toolbox.gcd.isPunctuation(c) or unicode_toolbox.gcd.isSymbol(c) or unicode_toolbox.gcd.isMark(c)) {
             return .SoftSeperator;
-        } else if (gcd.isControl(c)) {
+        } else if (unicode_toolbox.gcd.isControl(c)) {
             return .Empty;
         } else {
             return .Lower; // Maybe .Empty instead ?
@@ -82,11 +80,10 @@ pub const CharacterType = enum {
 pub fn firstMatchesGeneric(
     comptime T: type,
     ctx: anytype,
-    comptime eqlFunc: fn (@TypeOf(ctx), h: T, n: T, allocator: std.mem.Allocator) bool,
+    comptime eqlFunc: fn (@TypeOf(ctx), h: T, n: T) bool,
     indices: []usize,
     haystack: []const T,
     needle: []const T,
-    allocator: std.mem.Allocator,
 ) ?[]const usize {
     if (needle.len == 0) {
         return &.{};
@@ -99,7 +96,7 @@ pub fn firstMatchesGeneric(
     for (0.., haystack) |i, h| {
         const n = needle[index];
 
-        if (eqlFunc(ctx, h, n, allocator)) {
+        if (eqlFunc(ctx, h, n)) {
             indices[index] = i;
             index += 1;
             if (index >= needle.len) break;

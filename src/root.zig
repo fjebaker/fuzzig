@@ -92,7 +92,7 @@ pub fn AlgorithmType(
             return struct {
                 isEqual: fn (Ctx, ElType, ElType) bool,
                 bonus: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ScoreT,
-                score: fn (Ctx, ScoresType(ScoreT), ElType, ElType, std.mem.Allocator) ?ScoreT,
+                score: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ?ScoreT,
             };
         }
 
@@ -220,17 +220,10 @@ pub fn AlgorithmType(
                 .score = 0,
             };
 
-            self.deallocateMatrixAndBuffer();
+            const rows = needle.len;
+            const cols = haystack.len;
 
-            const haystack_normal = self.funcTable.convertString(haystack, self.allocator);
-            defer self.allocator.free(haystack_normal);
-
-            const needle_normal = self.funcTable.convertString(needle, self.allocator);
-            defer self.allocator.free(needle_normal);
-
-            const rows = needle_normal.len;
-            const cols = haystack_normal.len;
-
+            // TODO: resize if needed instead of reallocate
             self.allocateMatrixAndBuffer(cols, rows) catch @panic("Memory error");
 
             // resize the view into memory
@@ -243,8 +236,8 @@ pub fn AlgorithmType(
                 ctx,
                 funcTable.isEqual,
                 self.first_match_buffer,
-                haystack_normal,
-                needle_normal,
+                haystack,
+                needle,
             ) orelse return null;
 
             self.reset(rows + 1, cols + 1, first_match_indices);
@@ -625,6 +618,13 @@ pub const Ascii = struct {
     }
 };
 
+pub const UnicodeToolBox = struct {
+    gcd: *GenCatData,
+    norm: *Normalize,
+    norm_data: *Normalize.NormData,
+    cd: *CaseData,
+};
+
 pub const Unicode = struct {
     pub const Algorithm = AlgorithmType(u21, i32, .{});
     pub const Scores = ScoresType(i32);
@@ -635,19 +635,18 @@ pub const Unicode = struct {
         .isEqual = eqlFunc,
     };
 
-    fn eqlFunc(a: *Unicode, h: u21, n: u21) bool {
-        const gcd = GenCatData.init(a.alg.allocator) catch @panic("Memory error");
-        defer gcd.deinit();
-        if (gcd.isSeparator(n) and a.opts.wildcard_spaces) {
-            if (gcd.isLetter(h) or gcd.isNumber(h) or gcd.isSymbol(h)) {
+    fn eqlFunc(self: *Unicode, h: u21, n: u21) bool {
+        if (self.unicode_toolbox.gcd.isSeparator(n) and self.opts.wildcard_spaces) {
+            if (self.unicode_toolbox.gcd.isLetter(h) or
+                self.unicode_toolbox.gcd.isNumber(h) or
+                self.unicode_toolbox.gcd.isSymbol(h))
+            {
                 return true;
             } else {
                 return false;
             }
-        } else if (!a.opts.case_sensitive) {
-            const cd = CaseData.init(a.alg.allocator) catch @panic("Memory error");
-            defer cd.deinit();
-            return cd.toLower(h) == cd.toLower(n);
+        } else if (!self.opts.case_sensitive) {
+            return self.unicode_toolbox.cd.toLower(h) == self.unicode_toolbox.cd.toLower(n);
         } else {
             return h == n;
         }
@@ -674,8 +673,8 @@ pub const Unicode = struct {
         h: u21,
         n: u21,
     ) i32 {
-        const p = CharacterType.fromUnicode(h, self.alg.allocator);
-        const c = CharacterType.fromUnicode(n, self.alg.allocator);
+        const p = CharacterType.fromUnicode(h, self.unicode_toolbox);
+        const c = CharacterType.fromUnicode(n, self.unicode_toolbox);
 
         return switch (p.roleNextTo(c)) {
             .Head => scores.bonus_head,
@@ -685,19 +684,13 @@ pub const Unicode = struct {
         };
     }
 
-    fn convertString(a: *const Unicode, string: []const u8) []const u21 {
-        var norm_data: Normalize.NormData = undefined;
-        Normalize.NormData.init(&norm_data, a.alg.allocator) catch @panic("Cannot normalize string");
-        defer norm_data.deinit();
-
-        const n = Normalize{ .norm_data = &norm_data };
-
-        const nfc_result = n.nfc(a.alg.allocator, string) catch @panic("Cannot normalize string");
+    fn convertString(self: *const Unicode, string: []const u8) []const u21 {
+        const nfc_result = self.unicode_toolbox.norm.nfc(self.alg.allocator, string) catch @panic("Cannot normalize string");
         defer nfc_result.deinit();
 
         var iter = code_point.Iterator{ .bytes = nfc_result.slice };
 
-        var converted_string = std.ArrayList(u21).init(a.alg.allocator);
+        var converted_string = std.ArrayList(u21).init(self.alg.allocator);
         defer converted_string.deinit();
 
         while (iter.next()) |c| {
@@ -718,16 +711,41 @@ pub const Unicode = struct {
 
     alg: Algorithm,
     opts: Options,
+    unicode_toolbox: UnicodeToolBox,
 
     pub fn init(
         allocator: std.mem.Allocator,
         opts: Options,
     ) !Unicode {
         const alg = try Algorithm.init(allocator);
-        return .{ .alg = alg, .opts = opts };
+
+        const gcd = try GenCatData.init(allocator);
+
+        const norm_data: *Normalize.NormData = allocator.create(Normalize.NormData);
+        try Normalize.NormData.init(norm_data, allocator);
+
+        const norm = Normalize{ .norm_data = norm_data };
+
+        const cd = try CaseData.init(allocator);
+
+        return .{
+            .alg = alg,
+            .opts = opts,
+            .unicode_toolbox = .{
+                .gcd = &gcd,
+                .norm = &norm,
+                .norm_data = norm_data,
+                .cd = &cd,
+            },
+        };
     }
 
     pub fn deinit(self: *Unicode) void {
+        self.unicode_toolbox.gcd.deinit();
+        self.unicode_toolbox.norm_data.deinit();
+        self.alg.allocator.destroy(self.unicode_toolbox.norm_data);
+        self.alg.allocator.destroy(self.unicode_toolbox.norm);
+        self.unicode_toolbox.cd.deinit();
         self.alg.deinit();
     }
 
