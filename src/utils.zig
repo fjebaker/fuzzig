@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const GenCatData = @import("GenCatData");
+const CaseData = @import("CaseData");
+
 pub fn digitCount(v: anytype) usize {
     const abs: u32 = @intCast(@abs(v));
     if (abs == 0) return 1;
@@ -27,6 +30,33 @@ pub const CharacterType = enum {
             0 => .Empty,
             else => .Lower,
         };
+    }
+
+    pub fn fromUnicode(c: u21, allocator: std.mem.Allocator) CharacterType {
+        const cd = CaseData.init(allocator) catch @panic("Memory error");
+        defer cd.deinit();
+        const gcd = GenCatData.init(allocator) catch @panic("Memory error");
+        defer gcd.deinit();
+        if (cd.isLower(c)) {
+            return .Lower;
+        } else if (cd.isUpper(c)) {
+            return .Upper;
+        } else if (gcd.isNumber(c)) {
+            return .Number;
+        } else if (switch (c) {
+            ' ', '\\', '/', '|', '(', ')', '[', ']', '{', '}' => true,
+            else => false,
+        }) {
+            return .HardSeperator;
+        } else if (gcd.isSeparator(c)) {
+            return .HardSeperator;
+        } else if (gcd.isPunctuation(c) or gcd.isSymbol(c) or gcd.isMark(c)) {
+            return .SoftSeperator;
+        } else if (gcd.isControl(c)) {
+            return .Empty;
+        } else {
+            return .Lower; // Maybe .Empty instead ?
+        }
     }
 
     const Role = enum {

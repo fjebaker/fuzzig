@@ -2,6 +2,13 @@ const std = @import("std");
 const utils = @import("utils.zig");
 const structures = @import("structures.zig");
 
+const code_point = @import("code_point");
+const GenCatData = @import("GenCatData");
+const CaseData = @import("CaseData");
+const Normalize = @import("Normalize");
+
+const Allocator = std.mem.Allocator;
+
 const CharacterType = utils.CharacterType;
 const MatrixT = structures.MatrixT;
 
@@ -100,6 +107,12 @@ pub fn Algorithm(
 
         impl: Impl,
 
+        const TypeOfCaracter = switch (Impl) {
+            AsciiOptions => u8,
+            UnicodeOptions => u21,
+            else => unreachable,
+        };
+
         pub fn deinit(self: *Self) void {
             self.m.deinit();
             self.x.deinit();
@@ -117,6 +130,9 @@ pub fn Algorithm(
             max_needle: usize,
             impl: Impl,
         ) !Self {
+            var impl_with_allocator = impl;
+            impl_with_allocator.allocator = allocator;
+
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
 
@@ -149,7 +165,7 @@ pub fn Algorithm(
                 .first_match_buffer = first_match_buffer,
                 .traceback_buffer = traceback_buffer,
                 .allocator = allocator,
-                .impl = impl,
+                .impl = impl_with_allocator,
             };
         }
 
@@ -179,8 +195,14 @@ pub fn Algorithm(
                 .score = 0,
             };
 
-            const rows = needle.len;
-            const cols = haystack.len;
+            const haystack_normal = self.impl.convertString(haystack);
+            defer self.allocator.free(haystack_normal);
+
+            const needle_normal = self.impl.convertString(needle);
+            defer self.allocator.free(needle_normal);
+
+            const rows = needle_normal.len;
+            const cols = haystack_normal.len;
 
             // resize the view into memory
             self.m.resizeNoAlloc(rows + 1, cols + 1);
@@ -188,25 +210,25 @@ pub fn Algorithm(
             self.m_skip.resizeNoAlloc(rows + 1, cols + 1);
 
             const first_match_indices = utils.firstMatchesGeneric(
-                ElType,
+                TypeOfCaracter,
                 &self.impl,
                 Impl.eqlFunc,
                 self.first_match_buffer,
-                haystack,
-                needle,
+                haystack_normal,
+                needle_normal,
             ) orelse return null;
 
             self.reset(rows + 1, cols + 1, first_match_indices);
-            self.determineBonuses(haystack);
+            self.determineBonuses(TypeOfCaracter, haystack_normal);
 
-            try self.populateMatrices(haystack, needle, first_match_indices);
+            try self.populateMatrices(haystack_normal, needle_normal, first_match_indices);
             const col_max = self.findMaximalElement(
                 first_match_indices,
                 rows,
                 cols,
             );
 
-            const last_row_index = needle.len;
+            const last_row_index = needle_normal.len;
             const s = self.m.get(last_row_index, col_max);
             return .{
                 .score = s,
@@ -268,8 +290,8 @@ pub fn Algorithm(
             return buf;
         }
 
-        fn determineBonuses(self: *Self, haystack: []const ElType) void {
-            var prev: u8 = 0;
+        fn determineBonuses(self: *Self, T: type, haystack: []const T) void {
+            var prev: T = 0;
             for (1.., haystack) |i, h| {
                 self.role_bonus[i] = Impl.bonusFunc(&self.impl, scores, prev, h);
                 prev = h;
@@ -325,8 +347,8 @@ pub fn Algorithm(
 
         fn populateMatrices(
             self: *Self,
-            haystack: []const ElType,
-            needle: []const ElType,
+            haystack: []const TypeOfCaracter,
+            needle: []const TypeOfCaracter,
             first_match_indices: []const usize,
         ) !void {
             for (1.., needle) |i, n| {
@@ -455,6 +477,8 @@ pub fn Algorithm(
 pub const AsciiOptions = struct {
     const AsciiScores = Scores(i32);
 
+    pub const TypeOfCharacter = u8;
+
     case_sensitive: bool = true,
     case_penalize: bool = false,
     // treat spaces as wildcards for any kind of boundary
@@ -462,6 +486,13 @@ pub const AsciiOptions = struct {
     wildcard_spaces: bool = false,
 
     penalty_case_mistmatch: i32 = -2,
+
+    /// Don't forget the allocator !!!
+    allocator: Allocator = undefined,
+
+    fn convertString(a: *const AsciiOptions, string: []const u8) []const TypeOfCharacter {
+        return a.allocator.dupe(TypeOfCharacter, string) catch @panic("Memory error");
+    }
 
     fn eqlFunc(a: *const AsciiOptions, h: u8, n: u8) bool {
         if (n == ' ' and a.wildcard_spaces) {
@@ -508,8 +539,97 @@ pub const AsciiOptions = struct {
     }
 };
 
+pub const UnicodeOptions = struct {
+    const UnicodeScores = Scores(i32);
+
+    pub const TypeOfCharacter: type = u21;
+
+    case_sensitive: bool = true,
+    case_penalize: bool = false,
+    // treat spaces as wildcards for any kind of boundary
+    // i.e. match with any `[^a-z,A-Z,0-9]`
+    wildcard_spaces: bool = false,
+
+    penalty_case_mistmatch: i32 = -2,
+
+    /// Don't forget the allocator !!!
+    allocator: Allocator = undefined,
+
+    fn convertString(a: *const UnicodeOptions, string: []const u8) []const TypeOfCharacter {
+        var norm_data: Normalize.NormData = undefined;
+        Normalize.NormData.init(&norm_data, a.allocator) catch @panic("Cannot normalize string");
+        defer norm_data.deinit();
+
+        const n = Normalize{ .norm_data = &norm_data };
+
+        const nfc_result = n.nfc(a.allocator, string) catch @panic("Cannot normalize string");
+        defer nfc_result.deinit();
+
+        var iter = code_point.Iterator{ .bytes = nfc_result.slice };
+
+        var converted_string = std.ArrayList(TypeOfCharacter).init(a.allocator);
+        defer converted_string.deinit();
+
+        while (iter.next()) |c| {
+            converted_string.append(c.code) catch @panic("Memory error");
+        }
+        return converted_string.toOwnedSlice() catch @panic("Memory error");
+    }
+
+    fn eqlFunc(a: *const UnicodeOptions, h: u21, n: u21) bool {
+        const gcd = GenCatData.init(a.allocator) catch @panic("Memory error");
+        defer gcd.deinit();
+        if (gcd.isSeparator(n) and a.wildcard_spaces) {
+            if (gcd.isLetter(h) or gcd.isNumber(h) or gcd.isSymbol(h)) {
+                return true;
+            } else {
+                return false;
+            }
+        } else if (!a.case_sensitive) {
+            const cd = CaseData.init(a.allocator) catch @panic("Memory error");
+            defer cd.deinit();
+            return cd.toLower(h) == cd.toLower(n);
+        } else {
+            return h == n;
+        }
+    }
+
+    fn scoreFunc(
+        a: *const UnicodeOptions,
+        comptime scores: UnicodeScores,
+        h: u21,
+        n: u21,
+    ) ?i32 {
+        if (!a.eqlFunc(h, n)) return null;
+
+        if (a.case_penalize and (h != n)) {
+            return scores.score_match + a.penalty_case_mistmatch;
+        }
+        return scores.score_match;
+    }
+
+    fn bonusFunc(
+        self: *const UnicodeOptions,
+        comptime scores: UnicodeScores,
+        h: u21,
+        n: u21,
+    ) i32 {
+        const p = CharacterType.fromUnicode(h, self.allocator);
+        const c = CharacterType.fromUnicode(n, self.allocator);
+
+        return switch (p.roleNextTo(c)) {
+            .Head => scores.bonus_head,
+            .Camel => scores.bonus_camel,
+            .Break => scores.bonus_break,
+            .Tail => scores.bonus_tail,
+        };
+    }
+};
+
 /// Default ASCII Fuzzy Finder
 pub const Ascii = Algorithm(u8, i32, .{}, AsciiOptions);
+
+pub const Unicode = Algorithm(u8, i32, .{}, UnicodeOptions);
 
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
     const s = alg.score(haystack, needle);
@@ -519,6 +639,18 @@ fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime s
     // std.debug.print("SCORE : {d}\n", .{s orelse -1});
 
     try std.testing.expectEqual(score, s.?);
+}
+
+fn doTestScoreUnicode(alg: *Unicode, haystack: []const u8, needle: []const u8, comptime score: ?i32) !void {
+    const s = alg.score(haystack, needle);
+
+    if (score == null) {
+        // const stderr = std.io.getStdErr().writer();
+        // try alg.debugPrint(stderr, haystack, needle);
+        std.debug.print("SCORE : {d}\n", .{s orelse -1});
+    } else {
+        try std.testing.expectEqual(score, s.?);
+    }
 }
 
 test "algorithm test" {
@@ -713,4 +845,18 @@ test "traceback" {
     try doTestTraceback(&alg, "abcdefg", "abcefg", &.{ 0, 1, 2, 4, 5, 6 });
     try doTestTraceback(&alg, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
     try doTestTraceback(&alg, "./src/main.zig", "main", &.{ 6, 7, 8, 9 });
+}
+
+test "Unicode search" {
+    const o = UnicodeOptions.UnicodeScores{};
+
+    var alg = try Unicode.init(
+        std.testing.allocator,
+        128,
+        32,
+        .{},
+    );
+    defer alg.deinit();
+
+    try doTestScoreUnicode(&alg, "zig⚡ fast", "⚡", o.score_match);
 }
