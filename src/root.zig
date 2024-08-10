@@ -92,7 +92,7 @@ pub fn AlgorithmType(
             return struct {
                 isEqual: fn (Ctx, ElType, ElType) bool,
                 bonus: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ScoreT,
-                score: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ?ScoreT,
+                score: fn (Ctx, ScoresType(ScoreT), ElType, ElType, std.mem.Allocator) ?ScoreT,
             };
         }
 
@@ -114,8 +114,6 @@ pub fn AlgorithmType(
 
         allocator: std.mem.Allocator,
 
-        impl: Impl,
-
         initialised: bool,
 
         pub fn deinit(self: *Self) void {
@@ -125,7 +123,6 @@ pub fn AlgorithmType(
 
         pub fn init(
             allocator: std.mem.Allocator,
-            impl: Impl,
         ) !Self {
             return .{
                 .m = undefined,
@@ -137,7 +134,6 @@ pub fn AlgorithmType(
                 .first_match_buffer = undefined,
                 .traceback_buffer = undefined,
                 .allocator = allocator,
-                .impl = impl,
                 .initialised = false,
             };
         }
@@ -226,10 +222,10 @@ pub fn AlgorithmType(
 
             self.deallocateMatrixAndBuffer();
 
-            const haystack_normal = self.impl.convertString(haystack, self.allocator);
+            const haystack_normal = self.funcTable.convertString(haystack, self.allocator);
             defer self.allocator.free(haystack_normal);
 
-            const needle_normal = self.impl.convertString(needle, self.allocator);
+            const needle_normal = self.funcTable.convertString(needle, self.allocator);
             defer self.allocator.free(needle_normal);
 
             const rows = needle_normal.len;
@@ -339,7 +335,7 @@ pub fn AlgorithmType(
         ) void {
             var prev: ElType = 0;
             for (1.., haystack) |i, h| {
-                self.role_bonus[i] = Impl.bonusFunc(&self.impl, scores, prev, h, self.allocator);
+                self.role_bonus[i] = funcTable.bonusFunc(&self.impl, scores, prev, h, self.allocator);
                 prev = h;
             }
 
@@ -410,7 +406,7 @@ pub fn AlgorithmType(
                     // start by updating the M matrix
 
                     // compute score
-                    if (Impl.scoreFunc(&self.impl, scores, h, n, self.allocator)) |current| {
+                    if (funcTable.scoreFunc(&self.impl, scores, h, n, self.allocator)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -543,10 +539,6 @@ pub const Ascii = struct {
     alg: Algorithm,
     opts: Options,
 
-    fn convertString(_: *const Ascii, string: []const u8, allocator: Allocator) []const u8 {
-        return allocator.dupe(u8, string) catch @panic("Memory error");
-    }
-
     fn eqlFunc(self: *Ascii, h: u8, n: u8) bool {
         if (n == ' ' and self.opts.wildcard_spaces) {
             return switch (h) {
@@ -606,12 +598,10 @@ pub const Ascii = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        max_haystack: usize,
-        max_needle: usize,
         opts: Options,
     ) !Ascii {
-        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
-        return .{ .alg = alg, .opts = opts };
+        const alg = try Algorithm.init(allocator);
+        return Ascii{ .alg = alg, .opts = opts };
     }
 
     pub fn deinit(self: *Ascii) void {
@@ -625,6 +615,7 @@ pub const Ascii = struct {
     ) ?i32 {
         return self.alg.score(self, FunctionTable, haystack, needle);
     }
+
     pub fn scoreMatches(
         self: *Ascii,
         haystack: []const u8,
@@ -730,11 +721,9 @@ pub const Unicode = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        max_haystack: usize,
-        max_needle: usize,
         opts: Options,
     ) !Unicode {
-        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
+        const alg = try Algorithm.init(allocator);
         return .{ .alg = alg, .opts = opts };
     }
 
