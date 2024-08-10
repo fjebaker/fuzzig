@@ -82,10 +82,11 @@ pub const CharacterType = enum {
 pub fn firstMatchesGeneric(
     comptime T: type,
     ctx: anytype,
-    comptime eqlFunc: fn (@TypeOf(ctx), h: T, n: T) bool,
+    comptime eqlFunc: fn (@TypeOf(ctx), h: T, n: T, allocator: std.mem.Allocator) bool,
     indices: []usize,
     haystack: []const T,
     needle: []const T,
+    allocator: std.mem.Allocator,
 ) ?[]const usize {
     if (needle.len == 0) {
         return &.{};
@@ -98,7 +99,7 @@ pub fn firstMatchesGeneric(
     for (0.., haystack) |i, h| {
         const n = needle[index];
 
-        if (eqlFunc(ctx, h, n)) {
+        if (eqlFunc(ctx, h, n, allocator)) {
             indices[index] = i;
             index += 1;
             if (index >= needle.len) break;
@@ -108,9 +109,9 @@ pub fn firstMatchesGeneric(
     return indices[0..index];
 }
 
-fn simpleEql(comptime T: type) fn (void, T, T) bool {
+fn simpleEql(comptime T: type) fn (void, T, T, std.mem.Allocator) bool {
     return struct {
-        fn f(_: void, h: T, n: T) bool {
+        fn f(_: void, h: T, n: T, _: std.mem.Allocator) bool {
             return h == n;
         }
     }.f;
@@ -123,8 +124,9 @@ pub fn firstMatches(
     indices: []usize,
     haystack: []const T,
     needle: []const T,
+    allocator: std.mem.Allocator,
 ) ?[]const usize {
-    return firstMatchesGeneric(T, {}, simpleEql(T), indices, haystack, needle);
+    return firstMatchesGeneric(T, {}, simpleEql(T), indices, haystack, needle, allocator);
 }
 
 pub fn firstMatchesAlloc(
@@ -135,7 +137,7 @@ pub fn firstMatchesAlloc(
 ) !?[]const usize {
     const indices = try allocator.alloc(usize, needle.len);
     errdefer allocator.free(indices);
-    return firstMatches(T, indices, haystack, needle);
+    return firstMatches(T, indices, haystack, needle, allocator);
 }
 
 fn testFirstMatch(

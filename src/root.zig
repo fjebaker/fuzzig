@@ -133,9 +133,6 @@ pub fn AlgorithmType(
             allocator: std.mem.Allocator,
             impl: Impl,
         ) !Self {
-            var impl_with_allocator = impl;
-            impl_with_allocator.allocator = allocator;
-
             return .{
                 .m = undefined,
                 .x = undefined,
@@ -146,7 +143,7 @@ pub fn AlgorithmType(
                 .first_match_buffer = undefined,
                 .traceback_buffer = undefined,
                 .allocator = allocator,
-                .impl = impl_with_allocator,
+                .impl = impl,
                 .initialised = false,
             };
         }
@@ -235,10 +232,10 @@ pub fn AlgorithmType(
 
             self.deallocateMatrixAndBuffer();
 
-            const haystack_normal = self.impl.convertString(haystack);
+            const haystack_normal = self.impl.convertString(haystack, self.allocator);
             defer self.allocator.free(haystack_normal);
 
-            const needle_normal = self.impl.convertString(needle);
+            const needle_normal = self.impl.convertString(needle, self.allocator);
             defer self.allocator.free(needle_normal);
 
             const rows = needle_normal.len;
@@ -256,8 +253,8 @@ pub fn AlgorithmType(
                 ctx,
                 funcTable.isEqual,
                 self.first_match_buffer,
-                haystack,
-                needle,
+                haystack_normal,
+                needle_normal,
             ) orelse return null;
 
             self.reset(rows + 1, cols + 1, first_match_indices);
@@ -348,7 +345,7 @@ pub fn AlgorithmType(
         ) void {
             var prev: ElType = 0;
             for (1.., haystack) |i, h| {
-                self.role_bonus[i] = funcTable.bonus(ctx, scores, prev, h);
+                self.role_bonus[i] = Impl.bonusFunc(&self.impl, scores, prev, h, self.allocator);
                 prev = h;
             }
 
@@ -419,7 +416,7 @@ pub fn AlgorithmType(
                     // start by updating the M matrix
 
                     // compute score
-                    if (funcTable.score(ctx, scores, h, n)) |current| {
+                    if (Impl.scoreFunc(&self.impl, scores, h, n, self.allocator)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -541,6 +538,18 @@ pub const Ascii = struct {
         .isEqual = eqlFunc,
     };
 
+    case_sensitive: bool = true,
+    case_penalize: bool = false,
+    // treat spaces as wildcards for any kind of boundary
+    // i.e. match with any `[^a-z,A-Z,0-9]`
+    wildcard_spaces: bool = false,
+
+    penalty_case_mistmatch: i32 = -2,
+
+    fn convertString(_: *const AsciiOptions, string: []const u8, allocator: Allocator) []const TypeOfCharacter {
+        return allocator.dupe(TypeOfCharacter, string) catch @panic("Memory error");
+    }
+
     fn eqlFunc(self: *Ascii, h: u8, n: u8) bool {
         if (n == ' ' and self.opts.wildcard_spaces) {
             return switch (h) {
@@ -559,8 +568,9 @@ pub const Ascii = struct {
         scores: Scores,
         h: u8,
         n: u8,
+        allocator: Allocator,
     ) ?i32 {
-        if (!a.eqlFunc(h, n)) return null;
+        if (!a.eqlFunc(h, n, allocator)) return null;
 
         if (a.opts.case_penalize and (h != n)) {
             return scores.score_match + a.opts.penalty_case_mistmatch;
@@ -663,8 +673,9 @@ pub const Unicode = struct {
         scores: Scores,
         h: u21,
         n: u21,
+        allocator: Allocator,
     ) ?i32 {
-        if (!a.eqlFunc(h, n)) return null;
+        if (!a.eqlFunc(h, n, allocator)) return null;
 
         if (a.opts.case_penalize and (h != n)) {
             return scores.score_match + a.opts.penalty_case_mistmatch;
@@ -677,6 +688,7 @@ pub const Unicode = struct {
         scores: Scores,
         h: u21,
         n: u21,
+        allocator: Allocator,
     ) i32 {
         const p = CharacterType.fromUnicode(h, self.alg.allocator);
         const c = CharacterType.fromUnicode(n, self.alg.allocator);
