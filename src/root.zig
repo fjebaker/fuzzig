@@ -124,6 +124,7 @@ pub fn AlgorithmType(
         pub fn init(
             allocator: std.mem.Allocator,
         ) !Self {
+            // TODO: init all matrices and buffers
             return .{
                 .m = undefined,
                 .x = undefined,
@@ -328,7 +329,7 @@ pub fn AlgorithmType(
         ) void {
             var prev: ElType = 0;
             for (1.., haystack) |i, h| {
-                self.role_bonus[i] = funcTable.bonusFunc(&self.impl, scores, prev, h, self.allocator);
+                self.role_bonus[i] = funcTable.bonus(ctx, scores, prev, h);
                 prev = h;
             }
 
@@ -399,7 +400,7 @@ pub fn AlgorithmType(
                     // start by updating the M matrix
 
                     // compute score
-                    if (funcTable.scoreFunc(&self.impl, scores, h, n, self.allocator)) |current| {
+                    if (funcTable.score(ctx, scores, h, n)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -462,8 +463,8 @@ pub fn AlgorithmType(
         fn debugPrint(
             self: *const Self,
             writer: anytype,
-            haystack: []const u8,
-            needle: []const u8,
+            haystack: []const ElType,
+            needle: []const ElType,
         ) !void {
             const el_width = bonus: {
                 var max_digits: usize = 1;
@@ -521,14 +522,6 @@ pub const Ascii = struct {
         .isEqual = eqlFunc,
     };
 
-    case_sensitive: bool = true,
-    case_penalize: bool = false,
-    // treat spaces as wildcards for any kind of boundary
-    // i.e. match with any `[^a-z,A-Z,0-9]`
-    wildcard_spaces: bool = false,
-
-    penalty_case_mistmatch: i32 = -2,
-
     alg: Algorithm,
     opts: Options,
 
@@ -550,9 +543,8 @@ pub const Ascii = struct {
         scores: Scores,
         h: u8,
         n: u8,
-        allocator: Allocator,
     ) ?i32 {
-        if (!a.eqlFunc(h, n, allocator)) return null;
+        if (!a.eqlFunc(h, n)) return null;
 
         if (a.opts.case_penalize and (h != n)) {
             return scores.score_match + a.opts.penalty_case_mistmatch;
@@ -619,10 +611,10 @@ pub const Ascii = struct {
 };
 
 pub const UnicodeToolBox = struct {
-    gcd: *GenCatData,
-    norm: *Normalize,
+    gcd: *const GenCatData,
+    norm: *const Normalize,
     norm_data: *Normalize.NormData,
-    cd: *CaseData,
+    cd: *const CaseData,
 };
 
 pub const Unicode = struct {
@@ -657,9 +649,8 @@ pub const Unicode = struct {
         scores: Scores,
         h: u21,
         n: u21,
-        allocator: Allocator,
     ) ?i32 {
-        if (!a.eqlFunc(h, n, allocator)) return null;
+        if (!a.eqlFunc(h, n)) return null;
 
         if (a.opts.case_penalize and (h != n)) {
             return scores.score_match + a.opts.penalty_case_mistmatch;
@@ -719,11 +710,22 @@ pub const Unicode = struct {
     ) !Unicode {
         const alg = try Algorithm.init(allocator);
 
+        // const gcd: *GenCatData = try allocator.create(GenCatData);
+        // gcd.* = try GenCatData.init(allocator);
+
+        // const norm_data: *Normalize.NormData = try allocator.create(Normalize.NormData);
+        // try Normalize.NormData.init(norm_data, allocator);
+
+        // const norm: *Normalize = try allocator.create(Normalize);
+        // norm.* = Normalize{ .norm_data = norm_data };
+
+        // const cd: *CaseData = try allocator.create(CaseData);
+        // cd.* = try CaseData.init(allocator);
+
         const gcd = try GenCatData.init(allocator);
 
-        const norm_data: *Normalize.NormData = allocator.create(Normalize.NormData);
+        const norm_data: *Normalize.NormData = try allocator.create(Normalize.NormData);
         try Normalize.NormData.init(norm_data, allocator);
-
         const norm = Normalize{ .norm_data = norm_data };
 
         const cd = try CaseData.init(allocator);
@@ -742,10 +744,12 @@ pub const Unicode = struct {
 
     pub fn deinit(self: *Unicode) void {
         self.unicode_toolbox.gcd.deinit();
+        // self.alg.allocator.destroy(self.unicode_toolbox.gcd);
         self.unicode_toolbox.norm_data.deinit();
-        self.alg.allocator.destroy(self.unicode_toolbox.norm_data);
+        // self.alg.allocator.destroy(self.unicode_toolbox.norm_data);
         self.alg.allocator.destroy(self.unicode_toolbox.norm);
         self.unicode_toolbox.cd.deinit();
+        // self.alg.allocator.destroy(self.unicode_toolbox.cd);
         self.alg.deinit();
     }
 
