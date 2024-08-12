@@ -127,11 +127,13 @@ pub fn AlgorithmType(
 
         pub fn init(
             allocator: std.mem.Allocator,
+            max_haystack: usize,
+            max_needle: usize,
         ) !Self {
 
             // init to a min size, and resize after if needed
-            const rows = 1;
-            const cols = 1;
+            const rows = max_needle + 1;
+            const cols = max_haystack + 1;
 
             var m = try Matrix.init(allocator, rows, cols);
             errdefer m.deinit();
@@ -165,15 +167,19 @@ pub fn AlgorithmType(
             };
         }
 
-        fn resize(self: *Self, new_cols: usize, new_rows: usize) !void {
+        /// Resize matrixs and buffer if it is needed
+        pub fn resizeIfNeeded(self: *Self, max_haystack: usize, max_needle: usize) !void {
+            const new_rows = max_needle + 1;
+            const new_cols = max_haystack + 1;
+
             if (new_rows == self.m.rows and new_cols == self.m.cols) {
                 return;
             }
 
-            if (new_rows != self.m.rows) {
+            if (new_rows > self.first_match_buffer.len) {
                 self.first_match_buffer = try self.allocator.realloc(self.first_match_buffer, new_rows);
             }
-            if (new_cols != self.m.cols) {
+            if (new_cols > self.role_bonus.len) {
                 self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
                 self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
                 self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
@@ -191,6 +197,28 @@ pub fn AlgorithmType(
             return;
         }
 
+        /// Force to resize all matrixs and buffer
+        pub fn resize(self: *Self, max_haystack: usize, max_needle: usize) !void {
+            const new_rows = max_needle + 1;
+            const new_cols = max_haystack + 1;
+
+            self.first_match_buffer = try self.allocator.realloc(self.first_match_buffer, new_rows);
+
+            self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
+            self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
+            self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
+
+            self.m.resizeNoAlloc(new_rows, new_cols);
+            self.x.resizeNoAlloc(new_rows, new_cols);
+            self.m_skip.resizeNoAlloc(new_rows, new_cols);
+
+            try self.m.resizeAlloc(new_rows, new_cols);
+            try self.x.resizeAlloc(new_rows, new_cols);
+            try self.m_skip.resizeAlloc(new_rows, new_cols);
+
+            return;
+        }
+
         /// Compute matching score
         pub fn score(
             self: *Self,
@@ -198,8 +226,8 @@ pub fn AlgorithmType(
             comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
-        ) !?ScoreT {
-            const info = try self.scoreImpl(ctx, funcTable, haystack, needle) orelse
+        ) ?ScoreT {
+            const info = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return null;
             return info.score;
         }
@@ -216,20 +244,21 @@ pub fn AlgorithmType(
             comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
-        ) !?ScoreInfo {
+        ) ?ScoreInfo {
             if (needle.len == 0) return .{
                 .score = 0,
             };
 
+            std.debug.assert(haystack.len < self.traceback_buffer.len);
+            std.debug.assert(needle.len < self.first_match_buffer.len);
+
             const rows = needle.len;
             const cols = haystack.len;
 
-            try self.resize(cols + 1, rows + 1);
-
             // resize the view into memory
-            // self.m.resizeNoAlloc(rows + 1, cols + 1);
-            // self.x.resizeNoAlloc(rows + 1, cols + 1);
-            // self.m_skip.resizeNoAlloc(rows + 1, cols + 1);
+            self.m.resizeNoAlloc(rows + 1, cols + 1);
+            self.x.resizeNoAlloc(rows + 1, cols + 1);
+            self.m_skip.resizeNoAlloc(rows + 1, cols + 1);
 
             const first_match_indices = utils.firstMatchesGeneric(
                 ElType,
@@ -243,7 +272,7 @@ pub fn AlgorithmType(
             self.reset(rows + 1, cols + 1, first_match_indices);
             self.determineBonuses(ctx, funcTable, haystack);
 
-            try self.populateMatrices(
+            self.populateMatrices(
                 ctx,
                 funcTable,
                 haystack,
@@ -277,8 +306,8 @@ pub fn AlgorithmType(
             comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
-        ) !Matches {
-            const s = try self.scoreImpl(ctx, funcTable, haystack, needle) orelse
+        ) Matches {
+            const s = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return .{ .score = null };
 
             const matches = self.traceback(
@@ -387,7 +416,7 @@ pub fn AlgorithmType(
             haystack: []const ElType,
             needle: []const ElType,
             first_match_indices: []const usize,
-        ) !void {
+        ) void {
             for (1.., needle) |i, n| {
 
                 // how many characters of the haystack do we skip
@@ -581,10 +610,12 @@ pub const Ascii = struct {
     // public interface
 
     pub fn init(
+        max_haystack: usize,
+        max_needle: usize,
         allocator: std.mem.Allocator,
         opts: Options,
     ) !Ascii {
-        const alg = try Algorithm.init(allocator);
+        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
         return Ascii{ .alg = alg, .opts = opts };
     }
 
@@ -596,16 +627,16 @@ pub const Ascii = struct {
         self: *Ascii,
         haystack: []const u8,
         needle: []const u8,
-    ) !?i32 {
-        return try self.alg.score(self, FunctionTable, haystack, needle);
+    ) ?i32 {
+        return self.alg.score(self, FunctionTable, haystack, needle);
     }
 
     pub fn scoreMatches(
         self: *Ascii,
         haystack: []const u8,
         needle: []const u8,
-    ) !Algorithm.Matches {
-        return try self.alg.scoreMatches(self, FunctionTable, haystack, needle);
+    ) Algorithm.Matches {
+        return self.alg.scoreMatches(self, FunctionTable, haystack, needle);
     }
 };
 
@@ -706,10 +737,12 @@ pub const Unicode = struct {
     unicode_toolbox: UnicodeToolBox,
 
     pub fn init(
+        max_haystack: usize,
+        max_needle: usize,
         allocator: std.mem.Allocator,
         opts: Options,
     ) !Unicode {
-        const alg = try Algorithm.init(allocator);
+        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
 
         const gcd = try GenCatData.init(allocator);
 
@@ -751,7 +784,7 @@ pub const Unicode = struct {
         const needle_normal = try self.convertString(needle);
         defer self.alg.allocator.free(needle_normal);
 
-        return try self.alg.score(
+        return self.alg.score(
             self,
             FunctionTable,
             haystack_normal,
@@ -763,7 +796,7 @@ pub const Unicode = struct {
         self: *Unicode,
         haystack: []const u8,
         needle: []const u8,
-    ) !Algorithm.Matches {
+    ) Algorithm.Matches {
         const haystack_normal = self.convertString(haystack);
         defer self.allocator.free(haystack_normal);
         const needle_normal = self.convertString(needle);
@@ -778,7 +811,7 @@ pub const Unicode = struct {
 };
 
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
-    const s = try alg.score(haystack, needle);
+    const s = alg.score(haystack, needle);
     try std.testing.expectEqual(score, s.?);
 }
 
@@ -791,6 +824,8 @@ test "algorithm test" {
     const o = Ascii.Scores{};
 
     var alg = try Ascii.init(
+        128,
+        32,
         std.testing.allocator,
         .{},
     );
@@ -875,6 +910,8 @@ test "case sensitivity" {
     const o = Ascii.Scores{};
 
     var alg1 = try Ascii.init(
+        128,
+        32,
         std.testing.allocator,
         .{ .case_sensitive = false },
     );
@@ -897,6 +934,8 @@ test "case sensitivity" {
     );
 
     var alg2 = try Ascii.init(
+        128,
+        32,
         std.testing.allocator,
         .{
             .case_sensitive = false,
@@ -918,6 +957,8 @@ test "case sensitivity" {
 test "wildcard space" {
     const o = Ascii.Scores{};
     var alg = try Ascii.init(
+        128,
+        32,
         std.testing.allocator,
         .{ .wildcard_spaces = true },
     );
@@ -948,7 +989,7 @@ test "wildcard space" {
 }
 
 fn doTestTraceback(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime matches: []const usize) !void {
-    const s = try alg.scoreMatches(haystack, needle);
+    const s = alg.scoreMatches(haystack, needle);
 
     // const stderr = std.io.getStdErr().writer();
     // try alg.debugPrint(stderr, haystack, needle);
@@ -959,6 +1000,8 @@ fn doTestTraceback(alg: *Ascii, haystack: []const u8, needle: []const u8, compti
 
 test "traceback" {
     var alg = try Ascii.init(
+        64,
+        32,
         std.testing.allocator,
         .{},
     );
@@ -975,6 +1018,8 @@ test "Unicode search" {
     const o = Unicode.Scores{};
 
     var alg = try Unicode.init(
+        128,
+        32,
         std.testing.allocator,
         .{},
     );
