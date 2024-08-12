@@ -172,7 +172,7 @@ pub fn AlgorithmType(
             const new_rows = max_needle + 1;
             const new_cols = max_haystack + 1;
 
-            if (new_rows == self.m.rows and new_cols == self.m.cols) {
+            if (new_rows <= self.m.rows and new_cols <= self.m.cols) {
                 return;
             }
 
@@ -185,11 +185,7 @@ pub fn AlgorithmType(
                 self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
             }
 
-            if (new_rows * new_cols <= self.m.matrix.len) {
-                self.m.resizeNoAlloc(new_rows, new_cols);
-                self.x.resizeNoAlloc(new_rows, new_cols);
-                self.m_skip.resizeNoAlloc(new_rows, new_cols);
-            } else {
+            if (new_rows * new_cols > self.m.matrix.len) {
                 try self.m.resizeAlloc(new_rows, new_cols);
                 try self.x.resizeAlloc(new_rows, new_cols);
                 try self.m_skip.resizeAlloc(new_rows, new_cols);
@@ -207,10 +203,6 @@ pub fn AlgorithmType(
             self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
             self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
             self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
-
-            self.m.resizeNoAlloc(new_rows, new_cols);
-            self.x.resizeNoAlloc(new_rows, new_cols);
-            self.m_skip.resizeNoAlloc(new_rows, new_cols);
 
             try self.m.resizeAlloc(new_rows, new_cols);
             try self.x.resizeAlloc(new_rows, new_cols);
@@ -610,9 +602,9 @@ pub const Ascii = struct {
     // public interface
 
     pub fn init(
+        allocator: std.mem.Allocator,
         max_haystack: usize,
         max_needle: usize,
-        allocator: std.mem.Allocator,
         opts: Options,
     ) !Ascii {
         const alg = try Algorithm.init(allocator, max_haystack, max_needle);
@@ -737,9 +729,9 @@ pub const Unicode = struct {
     unicode_toolbox: UnicodeToolBox,
 
     pub fn init(
+        allocator: std.mem.Allocator,
         max_haystack: usize,
         max_needle: usize,
-        allocator: std.mem.Allocator,
         opts: Options,
     ) !Unicode {
         var alg = try Algorithm.init(allocator, max_haystack, max_needle);
@@ -829,9 +821,9 @@ test "algorithm test" {
     const o = Ascii.Scores{};
 
     var alg = try Ascii.init(
+        std.testing.allocator,
         128,
         32,
-        std.testing.allocator,
         .{},
     );
     defer alg.deinit();
@@ -915,9 +907,9 @@ test "case sensitivity" {
     const o = Ascii.Scores{};
 
     var alg1 = try Ascii.init(
+        std.testing.allocator,
         128,
         32,
-        std.testing.allocator,
         .{ .case_sensitive = false },
     );
     defer alg1.deinit();
@@ -939,9 +931,9 @@ test "case sensitivity" {
     );
 
     var alg2 = try Ascii.init(
+        std.testing.allocator,
         128,
         32,
-        std.testing.allocator,
         .{
             .case_sensitive = false,
             .case_penalize = true,
@@ -962,9 +954,9 @@ test "case sensitivity" {
 test "wildcard space" {
     const o = Ascii.Scores{};
     var alg = try Ascii.init(
+        std.testing.allocator,
         128,
         32,
-        std.testing.allocator,
         .{ .wildcard_spaces = true },
     );
     defer alg.deinit();
@@ -1005,9 +997,9 @@ fn doTestTraceback(alg: *Ascii, haystack: []const u8, needle: []const u8, compti
 
 test "traceback" {
     var alg = try Ascii.init(
+        std.testing.allocator,
         64,
         32,
-        std.testing.allocator,
         .{},
     );
     defer alg.deinit();
@@ -1023,9 +1015,9 @@ test "Unicode search" {
     const o = Unicode.Scores{};
 
     var alg = try Unicode.init(
+        std.testing.allocator,
         128,
         32,
-        std.testing.allocator,
         .{},
     );
     defer alg.deinit();

@@ -1,8 +1,5 @@
 const std = @import("std");
 
-const GenCatData = @import("GenCatData");
-const CaseData = @import("CaseData");
-
 const UnicodeToolBox = @import("root.zig").UnicodeToolBox;
 
 pub fn digitCount(v: anytype) usize {
