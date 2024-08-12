@@ -1,6 +1,6 @@
 .{
     .name = "fuzzig",
-    .version = "0.0.0",
+    .version = "0.1.0",
     .dependencies = .{
         .zg = .{
             .url = "https://codeberg.org/dude_the_builder/zg/archive/v0.13.2.tar.gz",
