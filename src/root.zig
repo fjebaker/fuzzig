@@ -134,8 +134,6 @@ pub fn AlgorithmType(
             max_haystack: usize,
             max_needle: usize,
         ) !Self {
-
-            // init to a min size, and resize after if needed
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
 
@@ -171,48 +169,35 @@ pub fn AlgorithmType(
             };
         }
 
-        /// Resize matrixs and buffer if it is needed
-        pub fn resizeIfNeeded(self: *Self, max_haystack: usize, max_needle: usize) !void {
-            const new_rows = max_needle + 1;
-            const new_cols = max_haystack + 1;
-
-            if (new_rows <= self.m.rows and new_cols <= self.m.cols) {
-                return;
-            }
-
-            if (new_rows > self.first_match_buffer.len) {
-                self.first_match_buffer = try self.allocator.realloc(self.first_match_buffer, new_rows);
-            }
-            if (new_cols > self.role_bonus.len) {
-                self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
-                self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
-                self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
-            }
-
-            if (new_rows * new_cols > self.m.matrix.len) {
-                try self.m.resizeAlloc(new_rows, new_cols);
-                try self.x.resizeAlloc(new_rows, new_cols);
-                try self.m_skip.resizeAlloc(new_rows, new_cols);
-            }
-            return;
-        }
-
-        /// Force to resize all matrixs and buffer
+        /// Resize pre-allocated buffers to fit a new maximum haystack and
+        /// needle size
         pub fn resize(self: *Self, max_haystack: usize, max_needle: usize) !void {
             const new_rows = max_needle + 1;
             const new_cols = max_haystack + 1;
 
-            self.first_match_buffer = try self.allocator.realloc(self.first_match_buffer, new_rows);
+            self.first_match_buffer = try self.allocator.realloc(
+                self.first_match_buffer,
+                new_rows,
+            );
 
-            self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
-            self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
-            self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
+            self.role_bonus = try self.allocator.realloc(
+                self.role_bonus,
+                new_cols,
+            );
+
+            self.bonus_buffer = try self.allocator.realloc(
+                self.bonus_buffer,
+                new_cols,
+            );
+
+            self.traceback_buffer = try self.allocator.realloc(
+                self.traceback_buffer,
+                new_cols,
+            );
 
             try self.m.resizeAlloc(new_rows, new_cols);
             try self.x.resizeAlloc(new_rows, new_cols);
             try self.m_skip.resizeAlloc(new_rows, new_cols);
-
-            return;
         }
 
         /// Compute matching score
@@ -546,9 +531,6 @@ pub const Ascii = struct {
         .isEqual = eqlFunc,
     };
 
-    alg: Algorithm,
-    opts: Options,
-
     fn eqlFunc(self: *Ascii, h: u8, n: u8) bool {
         if (n == ' ' and self.opts.wildcard_spaces) {
             return switch (h) {
@@ -603,6 +585,9 @@ pub const Ascii = struct {
         penalty_case_mistmatch: i32 = -2,
     };
 
+    alg: Algorithm,
+    opts: Options,
+
     // public interface
 
     pub fn init(
@@ -619,6 +604,7 @@ pub const Ascii = struct {
         self.alg.deinit();
     }
 
+    /// Compute matching score
     pub fn score(
         self: *Ascii,
         haystack: []const u8,
@@ -627,12 +613,19 @@ pub const Ascii = struct {
         return self.alg.score(self, FunctionTable, haystack, needle);
     }
 
+    /// Compute the score and the indices of the matched characters
     pub fn scoreMatches(
         self: *Ascii,
         haystack: []const u8,
         needle: []const u8,
     ) Algorithm.Matches {
         return self.alg.scoreMatches(self, FunctionTable, haystack, needle);
+    }
+
+    /// Resize pre-allocated buffers to fit a new maximum haystack and
+    /// needle size
+    pub fn resize(self: *Ascii, max_haystack: usize, max_needle: usize) !void {
+        try self.alg.resize(max_haystack, max_needle);
     }
 };
 

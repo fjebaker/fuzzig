@@ -172,6 +172,8 @@ pub const Unicode = struct {
         self.alg.deinit();
     }
 
+    /// Compute matching score. Recasts the `u8` array to `u21` to properly
+    /// encode unicode characters
     pub fn score(
         self: *Unicode,
         haystack: []const u8,
@@ -191,6 +193,8 @@ pub const Unicode = struct {
         );
     }
 
+    /// Compute the score and the indices of the matched characters. Recasts
+    /// the `u8` array to `u21` to properly encode unicode characters
     pub fn scoreMatches(
         self: *Unicode,
         haystack: []const u8,
@@ -198,14 +202,22 @@ pub const Unicode = struct {
     ) Algorithm.Matches {
         const haystack_normal = self.convertString(haystack);
         defer self.allocator.free(haystack_normal);
+
         const needle_normal = self.convertString(needle);
         defer self.allocator.free(needle_normal);
+
         return self.alg.scoreMatches(
             self,
             FunctionTable,
             haystack_normal,
             needle_normal,
         );
+    }
+
+    /// Resize pre-allocated buffers to fit a new maximum haystack and
+    /// needle size
+    pub fn resize(self: *Unicode, max_haystack: usize, max_needle: usize) !void {
+        try self.alg.resize(max_haystack, max_needle);
     }
 };
 
