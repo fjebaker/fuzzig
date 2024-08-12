@@ -116,6 +116,9 @@ pub fn AlgorithmType(
 
         traceback_buffer: []usize,
 
+        max_haystack: usize,
+        max_needle: usize,
+
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *Self) void {
@@ -165,6 +168,10 @@ pub fn AlgorithmType(
                 .bonus_buffer = bonus_buffer,
                 .first_match_buffer = first_match_buffer,
                 .traceback_buffer = traceback_buffer,
+
+                .max_haystack = max_haystack,
+                .max_needle = max_needle,
+
                 .allocator = allocator,
             };
         }
@@ -198,6 +205,9 @@ pub fn AlgorithmType(
             try self.m.resizeAlloc(new_rows, new_cols);
             try self.x.resizeAlloc(new_rows, new_cols);
             try self.m_skip.resizeAlloc(new_rows, new_cols);
+
+            self.max_haystack = max_haystack;
+            self.max_needle = max_needle;
         }
 
         /// Compute matching score
@@ -211,6 +221,18 @@ pub fn AlgorithmType(
             const info = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return null;
             return info.score;
+        }
+
+        /// Return the maximum (`haystack.len <= MAXIMUM`) haystack length that
+        /// the algorithm has allocated memory for. To increase, use `resize`
+        pub fn maximumHaystackLen(self: *const Self) usize {
+            return self.max_haystack;
+        }
+
+        /// Return the maximum (`needle.len <= MAXIMUM`) needle length that
+        /// the algorithm has allocated memory for. To increase, use `resize`
+        pub fn maximumNeedleLen(self: *const Self) usize {
+            return self.max_needle;
         }
 
         const ScoreInfo = struct {
@@ -230,8 +252,8 @@ pub fn AlgorithmType(
                 .score = 0,
             };
 
-            std.debug.assert(haystack.len < self.traceback_buffer.len);
-            std.debug.assert(needle.len < self.first_match_buffer.len);
+            std.debug.assert(haystack.len <= self.maximumHaystackLen());
+            std.debug.assert(needle.len < self.maximumNeedleLen());
 
             const rows = needle.len;
             const cols = haystack.len;
