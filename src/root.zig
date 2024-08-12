@@ -210,6 +210,48 @@ pub fn AlgorithmType(
             self.max_needle = max_needle;
         }
 
+        /// Ensure that there is enought memory allocated, and allocate memory only if needed.
+        /// Will never shrink memory.
+        pub fn ensureSize(self: *Self, max_haystack: usize, max_needle: usize) !void {
+            const new_rows = max_needle + 1;
+            const new_cols = max_haystack + 1;
+
+            if (new_rows < self.max_needle and new_cols < self.max_haystack) {
+                return;
+            }
+
+            if (new_rows > self.max_needle + 1) {
+                self.first_match_buffer = try self.allocator.realloc(
+                    self.first_match_buffer,
+                    new_rows,
+                );
+                self.max_needle = max_needle;
+            }
+            if (new_cols > self.max_haystack + 1) {
+                self.role_bonus = try self.allocator.realloc(
+                    self.role_bonus,
+                    new_cols,
+                );
+
+                self.bonus_buffer = try self.allocator.realloc(
+                    self.bonus_buffer,
+                    new_cols,
+                );
+
+                self.traceback_buffer = try self.allocator.realloc(
+                    self.traceback_buffer,
+                    new_cols,
+                );
+                self.max_haystack = max_haystack;
+            }
+            if (new_cols * new_rows < (self.max_haystack + 1) * (self.max_needle + 1)) {
+                try self.m.resizeAlloc(new_rows, new_cols);
+                try self.x.resizeAlloc(new_rows, new_cols);
+                try self.m_skip.resizeAlloc(new_rows, new_cols);
+            }
+            return;
+        }
+
         /// Compute matching score
         pub fn score(
             self: *Self,
