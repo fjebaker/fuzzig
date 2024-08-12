@@ -5,6 +5,17 @@ const structures = @import("structures.zig");
 const CharacterType = utils.CharacterType;
 const MatrixT = structures.MatrixT;
 
+pub const Unicode = if (@import("options").unicode)
+    @import("unicode.zig").Unicode
+else
+    @compileError("Not compiled with unicode support");
+
+test "other" {
+    comptime if (@import("options").unicode) {
+        _ = @import("unicode.zig");
+    };
+}
+
 // Matrix Filling: for two sequences a1a2a3..., b1b2b3... we have a reward
 // function
 //
@@ -51,7 +62,7 @@ const MatrixT = structures.MatrixT;
 //
 // The algorithm is now O(mn).
 
-pub fn Scores(comptime ScoreT: type) type {
+pub fn ScoresType(comptime ScoreT: type) type {
     return struct {
         score_match: ScoreT = 16,
         score_gap_start: ScoreT = -3,
@@ -70,15 +81,24 @@ pub fn Scores(comptime ScoreT: type) type {
     };
 }
 
-pub fn Algorithm(
+pub fn AlgorithmType(
     comptime ElType: type,
     comptime ScoreT: type,
-    comptime scores: Scores(ScoreT),
-    comptime Impl: type,
+    comptime scores: ScoresType(ScoreT),
 ) type {
     return struct {
         const Matrix = MatrixT(ScoreT);
         const Self = @This();
+
+        pub fn FunctionTable(
+            comptime Ctx: type,
+        ) type {
+            return struct {
+                isEqual: fn (Ctx, ElType, ElType) bool,
+                bonus: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ScoreT,
+                score: fn (Ctx, ScoresType(ScoreT), ElType, ElType) ?ScoreT,
+            };
+        }
 
         // Scoring matrix
         m: Matrix,
@@ -96,9 +116,10 @@ pub fn Algorithm(
 
         traceback_buffer: []usize,
 
-        allocator: std.mem.Allocator,
+        max_haystack: usize,
+        max_needle: usize,
 
-        impl: Impl,
+        allocator: std.mem.Allocator,
 
         pub fn deinit(self: *Self) void {
             self.m.deinit();
@@ -115,7 +136,6 @@ pub fn Algorithm(
             allocator: std.mem.Allocator,
             max_haystack: usize,
             max_needle: usize,
-            impl: Impl,
         ) !Self {
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
@@ -148,20 +168,71 @@ pub fn Algorithm(
                 .bonus_buffer = bonus_buffer,
                 .first_match_buffer = first_match_buffer,
                 .traceback_buffer = traceback_buffer,
+
+                .max_haystack = max_haystack,
+                .max_needle = max_needle,
+
                 .allocator = allocator,
-                .impl = impl,
             };
+        }
+
+        /// Resize pre-allocated buffers to fit a new maximum haystack and
+        /// needle size
+        pub fn resize(self: *Self, max_haystack: usize, max_needle: usize) !void {
+            const new_rows = max_needle + 1;
+            const new_cols = max_haystack + 1;
+
+            self.first_match_buffer = try self.allocator.realloc(
+                self.first_match_buffer,
+                new_rows,
+            );
+
+            self.role_bonus = try self.allocator.realloc(
+                self.role_bonus,
+                new_cols,
+            );
+
+            self.bonus_buffer = try self.allocator.realloc(
+                self.bonus_buffer,
+                new_cols,
+            );
+
+            self.traceback_buffer = try self.allocator.realloc(
+                self.traceback_buffer,
+                new_cols,
+            );
+
+            try self.m.resizeAlloc(new_rows, new_cols);
+            try self.x.resizeAlloc(new_rows, new_cols);
+            try self.m_skip.resizeAlloc(new_rows, new_cols);
+
+            self.max_haystack = max_haystack;
+            self.max_needle = max_needle;
         }
 
         /// Compute matching score
         pub fn score(
             self: *Self,
+            ctx: anytype,
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
         ) ?ScoreT {
-            const info = self.scoreImpl(haystack, needle) orelse
+            const info = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return null;
             return info.score;
+        }
+
+        /// Return the maximum (`haystack.len <= MAXIMUM`) haystack length that
+        /// the algorithm has allocated memory for. To increase, use `resize`
+        pub fn maximumHaystackLen(self: *const Self) usize {
+            return self.max_haystack;
+        }
+
+        /// Return the maximum (`needle.len <= MAXIMUM`) needle length that
+        /// the algorithm has allocated memory for. To increase, use `resize`
+        pub fn maximumNeedleLen(self: *const Self) usize {
+            return self.max_needle;
         }
 
         const ScoreInfo = struct {
@@ -172,12 +243,17 @@ pub fn Algorithm(
 
         fn scoreImpl(
             self: *Self,
+            ctx: anytype,
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
         ) ?ScoreInfo {
             if (needle.len == 0) return .{
                 .score = 0,
             };
+
+            std.debug.assert(haystack.len <= self.maximumHaystackLen());
+            std.debug.assert(needle.len < self.maximumNeedleLen());
 
             const rows = needle.len;
             const cols = haystack.len;
@@ -189,17 +265,23 @@ pub fn Algorithm(
 
             const first_match_indices = utils.firstMatchesGeneric(
                 ElType,
-                &self.impl,
-                Impl.eqlFunc,
+                ctx,
+                funcTable.isEqual,
                 self.first_match_buffer,
                 haystack,
                 needle,
             ) orelse return null;
 
             self.reset(rows + 1, cols + 1, first_match_indices);
-            self.determineBonuses(haystack);
+            self.determineBonuses(ctx, funcTable, haystack);
 
-            try self.populateMatrices(haystack, needle, first_match_indices);
+            self.populateMatrices(
+                ctx,
+                funcTable,
+                haystack,
+                needle,
+                first_match_indices,
+            );
             const col_max = self.findMaximalElement(
                 first_match_indices,
                 rows,
@@ -223,10 +305,12 @@ pub fn Algorithm(
         /// Compute the score and the indices of the matched characters
         pub fn scoreMatches(
             self: *Self,
-            haystack: []const u8,
-            needle: []const u8,
+            ctx: anytype,
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
+            haystack: []const ElType,
+            needle: []const ElType,
         ) Matches {
-            const s = self.scoreImpl(haystack, needle) orelse
+            const s = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return .{ .score = null };
 
             const matches = self.traceback(
@@ -268,10 +352,15 @@ pub fn Algorithm(
             return buf;
         }
 
-        fn determineBonuses(self: *Self, haystack: []const ElType) void {
-            var prev: u8 = 0;
+        fn determineBonuses(
+            self: *Self,
+            ctx: anytype,
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
+            haystack: []const ElType,
+        ) void {
+            var prev: ElType = 0;
             for (1.., haystack) |i, h| {
-                self.role_bonus[i] = Impl.bonusFunc(&self.impl, scores, prev, h);
+                self.role_bonus[i] = funcTable.bonus(ctx, scores, prev, h);
                 prev = h;
             }
 
@@ -325,10 +414,12 @@ pub fn Algorithm(
 
         fn populateMatrices(
             self: *Self,
+            ctx: anytype,
+            comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
             first_match_indices: []const usize,
-        ) !void {
+        ) void {
             for (1.., needle) |i, n| {
 
                 // how many characters of the haystack do we skip
@@ -340,7 +431,7 @@ pub fn Algorithm(
                     // start by updating the M matrix
 
                     // compute score
-                    if (Impl.scoreFunc(&self.impl, scores, h, n)) |current| {
+                    if (funcTable.score(ctx, scores, h, n)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -452,24 +543,23 @@ pub fn Algorithm(
     };
 }
 
-pub const AsciiOptions = struct {
-    const AsciiScores = Scores(i32);
+pub const Ascii = struct {
+    pub const Algorithm = AlgorithmType(u8, i32, .{});
+    pub const Scores = ScoresType(i32);
 
-    case_sensitive: bool = true,
-    case_penalize: bool = false,
-    // treat spaces as wildcards for any kind of boundary
-    // i.e. match with any `[^a-z,A-Z,0-9]`
-    wildcard_spaces: bool = false,
+    const FunctionTable: Algorithm.FunctionTable(*Ascii) = .{
+        .score = scoreFunc,
+        .bonus = bonusFunc,
+        .isEqual = eqlFunc,
+    };
 
-    penalty_case_mistmatch: i32 = -2,
-
-    fn eqlFunc(a: *const AsciiOptions, h: u8, n: u8) bool {
-        if (n == ' ' and a.wildcard_spaces) {
+    fn eqlFunc(self: *Ascii, h: u8, n: u8) bool {
+        if (n == ' ' and self.opts.wildcard_spaces) {
             return switch (h) {
                 'a'...'z', 'A'...'Z', '0'...'9' => false,
                 else => true,
             };
-        } else if (!a.case_sensitive) {
+        } else if (!self.opts.case_sensitive) {
             return std.ascii.toLower(h) == std.ascii.toLower(n);
         } else {
             return h == n;
@@ -477,22 +567,22 @@ pub const AsciiOptions = struct {
     }
 
     fn scoreFunc(
-        a: *const AsciiOptions,
-        comptime scores: AsciiScores,
+        a: *Ascii,
+        scores: Scores,
         h: u8,
         n: u8,
     ) ?i32 {
         if (!a.eqlFunc(h, n)) return null;
 
-        if (a.case_penalize and (h != n)) {
-            return scores.score_match + a.penalty_case_mistmatch;
+        if (a.opts.case_penalize and (h != n)) {
+            return scores.score_match + a.opts.penalty_case_mistmatch;
         }
         return scores.score_match;
     }
 
     fn bonusFunc(
-        _: *const AsciiOptions,
-        comptime scores: AsciiScores,
+        _: *Ascii,
+        scores: Scores,
         h: u8,
         n: u8,
     ) i32 {
@@ -506,23 +596,68 @@ pub const AsciiOptions = struct {
             .Tail => scores.bonus_tail,
         };
     }
-};
 
-/// Default ASCII Fuzzy Finder
-pub const Ascii = Algorithm(u8, i32, .{}, AsciiOptions);
+    pub const Options = struct {
+        case_sensitive: bool = true,
+        case_penalize: bool = false,
+        // treat spaces as wildcards for any kind of boundary
+        // i.e. match with any `[^a-z,A-Z,0-9]`
+        wildcard_spaces: bool = false,
+
+        penalty_case_mistmatch: i32 = -2,
+    };
+
+    alg: Algorithm,
+    opts: Options,
+
+    // public interface
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        max_haystack: usize,
+        max_needle: usize,
+        opts: Options,
+    ) !Ascii {
+        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
+        return Ascii{ .alg = alg, .opts = opts };
+    }
+
+    pub fn deinit(self: *Ascii) void {
+        self.alg.deinit();
+    }
+
+    /// Compute matching score
+    pub fn score(
+        self: *Ascii,
+        haystack: []const u8,
+        needle: []const u8,
+    ) ?i32 {
+        return self.alg.score(self, FunctionTable, haystack, needle);
+    }
+
+    /// Compute the score and the indices of the matched characters
+    pub fn scoreMatches(
+        self: *Ascii,
+        haystack: []const u8,
+        needle: []const u8,
+    ) Algorithm.Matches {
+        return self.alg.scoreMatches(self, FunctionTable, haystack, needle);
+    }
+
+    /// Resize pre-allocated buffers to fit a new maximum haystack and
+    /// needle size
+    pub fn resize(self: *Ascii, max_haystack: usize, max_needle: usize) !void {
+        try self.alg.resize(max_haystack, max_needle);
+    }
+};
 
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
     const s = alg.score(haystack, needle);
-
-    // const stderr = std.io.getStdErr().writer();
-    // try alg.debugPrint(stderr, haystack, needle);
-    // std.debug.print("SCORE : {d}\n", .{s orelse -1});
-
     try std.testing.expectEqual(score, s.?);
 }
 
 test "algorithm test" {
-    const o = AsciiOptions.AsciiScores{};
+    const o = Ascii.Scores{};
 
     var alg = try Ascii.init(
         std.testing.allocator,
@@ -608,7 +743,7 @@ test "algorithm test" {
 }
 
 test "case sensitivity" {
-    const o = AsciiOptions.AsciiScores{};
+    const o = Ascii.Scores{};
 
     var alg1 = try Ascii.init(
         std.testing.allocator,
@@ -645,7 +780,7 @@ test "case sensitivity" {
     );
     defer alg2.deinit();
 
-    const A: AsciiOptions = .{};
+    const A: Ascii.Options = .{};
     try doTestScore(
         &alg2,
         "xaB",
@@ -656,7 +791,7 @@ test "case sensitivity" {
 }
 
 test "wildcard space" {
-    const o = AsciiOptions.AsciiScores{};
+    const o = Ascii.Scores{};
     var alg = try Ascii.init(
         std.testing.allocator,
         128,

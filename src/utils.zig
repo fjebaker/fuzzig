@@ -1,4 +1,6 @@
 const std = @import("std");
+const GenCatData = @import("GenCatData");
+const CaseData = @import("CaseData");
 
 pub fn digitCount(v: anytype) usize {
     const abs: u32 = @intCast(@abs(v));
