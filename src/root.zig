@@ -225,6 +225,7 @@ pub fn AlgorithmType(
             const cols = haystack.len;
 
             // TODO: resize if needed instead of reallocate
+            self.deallocateMatrixAndBuffer();
             self.allocateMatrixAndBuffer(cols, rows) catch @panic("Memory error");
 
             // resize the view into memory
@@ -611,10 +612,10 @@ pub const Ascii = struct {
 };
 
 pub const UnicodeToolBox = struct {
-    gcd: *const GenCatData,
-    norm: *const Normalize,
+    gcd: GenCatData,
+    norm: Normalize,
     norm_data: *Normalize.NormData,
-    cd: *const CaseData,
+    cd: CaseData,
 };
 
 pub const Unicode = struct {
@@ -710,21 +711,10 @@ pub const Unicode = struct {
     ) !Unicode {
         const alg = try Algorithm.init(allocator);
 
-        // const gcd: *GenCatData = try allocator.create(GenCatData);
-        // gcd.* = try GenCatData.init(allocator);
-
-        // const norm_data: *Normalize.NormData = try allocator.create(Normalize.NormData);
-        // try Normalize.NormData.init(norm_data, allocator);
-
-        // const norm: *Normalize = try allocator.create(Normalize);
-        // norm.* = Normalize{ .norm_data = norm_data };
-
-        // const cd: *CaseData = try allocator.create(CaseData);
-        // cd.* = try CaseData.init(allocator);
-
         const gcd = try GenCatData.init(allocator);
 
-        const norm_data: *Normalize.NormData = try allocator.create(Normalize.NormData);
+        var norm_data: *Normalize.NormData = undefined;
+        norm_data = try allocator.create(Normalize.NormData);
         try Normalize.NormData.init(norm_data, allocator);
         const norm = Normalize{ .norm_data = norm_data };
 
@@ -734,22 +724,19 @@ pub const Unicode = struct {
             .alg = alg,
             .opts = opts,
             .unicode_toolbox = .{
-                .gcd = &gcd,
-                .norm = &norm,
+                .gcd = gcd,
+                .norm = norm,
                 .norm_data = norm_data,
-                .cd = &cd,
+                .cd = cd,
             },
         };
     }
 
     pub fn deinit(self: *Unicode) void {
         self.unicode_toolbox.gcd.deinit();
-        // self.alg.allocator.destroy(self.unicode_toolbox.gcd);
         self.unicode_toolbox.norm_data.deinit();
-        // self.alg.allocator.destroy(self.unicode_toolbox.norm_data);
-        self.alg.allocator.destroy(self.unicode_toolbox.norm);
+        self.alg.allocator.destroy(self.unicode_toolbox.norm_data);
         self.unicode_toolbox.cd.deinit();
-        // self.alg.allocator.destroy(self.unicode_toolbox.cd);
         self.alg.deinit();
     }
 
