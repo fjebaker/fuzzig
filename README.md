@@ -57,7 +57,7 @@ The module defines an `Algorithm` generic type, which accepts the element type o
 - Algorithms only have `score` and `scoreMatches` as public functions.
 - If not matches are detected, the score will be `null`.
 
-This package currently only implements an [ASCII fuzzy finder](https://github.com/fjebaker/fuzzig/blob/a78afddec30b547643604aafaee202db6fc878f1/src/root.zig#L457-L511), but can be used as reference to extend to e.g. UTF8 or other character encodings.
+This package currently implements ASCII and Unicode (compile with `-Dunicode`) fuzzy finders. The fuzzy finder implementation should be flexible enough to extend to other data types or character encodings in downstream packages by providing your own wrapper around `AlgorithmType`. See the ASCII and Unicode implementations for examples.
 
 ## Usage
 
