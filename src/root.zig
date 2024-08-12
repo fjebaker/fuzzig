@@ -676,7 +676,7 @@ pub const Unicode = struct {
         };
     }
 
-    fn convertString(self: *const Unicode, string: []const u8) []const u21 {
+    fn convertString(self: *const Unicode, string: []const u8) ![]const u21 {
         const nfc_result = self.unicode_toolbox.norm.nfc(self.alg.allocator, string) catch @panic("Cannot normalize string");
         defer nfc_result.deinit();
 
