@@ -114,81 +114,81 @@ pub fn AlgorithmType(
 
         allocator: std.mem.Allocator,
 
-        initialised: bool,
-
         pub fn deinit(self: *Self) void {
-            self.deallocateMatrixAndBuffer();
+            self.m.deinit();
+            self.x.deinit();
+            self.m_skip.deinit();
+            self.allocator.free(self.role_bonus);
+            self.allocator.free(self.bonus_buffer);
+            self.allocator.free(self.first_match_buffer);
+            self.allocator.free(self.traceback_buffer);
             self.* = undefined;
         }
 
         pub fn init(
             allocator: std.mem.Allocator,
         ) !Self {
-            // TODO: init all matrices and buffers
-            return .{
-                .m = undefined,
-                .x = undefined,
-                .m_skip = undefined,
 
-                .role_bonus = undefined,
-                .bonus_buffer = undefined,
-                .first_match_buffer = undefined,
-                .traceback_buffer = undefined,
+            // init to a min size, and resize after if needed
+            const rows = 1;
+            const cols = 1;
+
+            var m = try Matrix.init(allocator, rows, cols);
+            errdefer m.deinit();
+            var x = try Matrix.init(allocator, rows, cols);
+            errdefer x.deinit();
+            var m_skip = try MatrixT(bool).init(allocator, rows, cols);
+            errdefer m_skip.deinit();
+
+            const role_bonus = try allocator.alloc(ScoreT, cols);
+            errdefer allocator.free(role_bonus);
+
+            const bonus_buffer = try allocator.alloc(ScoreT, cols);
+            errdefer allocator.free(bonus_buffer);
+
+            const first_match_buffer = try allocator.alloc(usize, rows);
+            errdefer allocator.free(first_match_buffer);
+
+            const traceback_buffer = try allocator.alloc(usize, cols);
+            errdefer allocator.free(traceback_buffer);
+
+            return .{
+                .m = m,
+                .x = x,
+                .m_skip = m_skip,
+
+                .role_bonus = role_bonus,
+                .bonus_buffer = bonus_buffer,
+                .first_match_buffer = first_match_buffer,
+                .traceback_buffer = traceback_buffer,
                 .allocator = allocator,
-                .initialised = false,
             };
         }
 
-        fn allocateMatrixAndBuffer(
-            self: *Self,
-            max_haystack: usize,
-            max_needle: usize,
-        ) !void {
-            const rows = max_needle + 1;
-            const cols = max_haystack + 1;
-
-            var m = try Matrix.init(self.allocator, rows, cols);
-            errdefer m.deinit();
-            var x = try Matrix.init(self.allocator, rows, cols);
-            errdefer x.deinit();
-            var m_skip = try MatrixT(bool).init(self.allocator, rows, cols);
-            errdefer m_skip.deinit();
-
-            const role_bonus = try self.allocator.alloc(ScoreT, cols);
-            errdefer self.allocator.free(role_bonus);
-
-            const bonus_buffer = try self.allocator.alloc(ScoreT, cols);
-            errdefer self.allocator.free(bonus_buffer);
-
-            const first_match_buffer = try self.allocator.alloc(usize, rows);
-            errdefer self.allocator.free(first_match_buffer);
-
-            const traceback_buffer = try self.allocator.alloc(usize, cols);
-            errdefer self.allocator.free(traceback_buffer);
-
-            self.m = m;
-            self.x = x;
-            self.m_skip = m_skip;
-
-            self.role_bonus = role_bonus;
-            self.bonus_buffer = bonus_buffer;
-            self.first_match_buffer = first_match_buffer;
-            self.traceback_buffer = traceback_buffer;
-
-            self.initialised = true;
-        }
-
-        fn deallocateMatrixAndBuffer(self: *Self) void {
-            if (self.initialised) {
-                self.m.deinit();
-                self.x.deinit();
-                self.m_skip.deinit();
-                self.allocator.free(self.role_bonus);
-                self.allocator.free(self.bonus_buffer);
-                self.allocator.free(self.first_match_buffer);
-                self.allocator.free(self.traceback_buffer);
+        fn resize(self: *Self, new_cols: usize, new_rows: usize) !void {
+            if (new_rows == self.m.rows and new_cols == self.m.cols) {
+                return;
             }
-            self.initialised = false;
+
+            if (new_rows != self.m.rows) {
+                self.first_match_buffer = try self.allocator.realloc(self.first_match_buffer, new_rows);
+            }
+            if (new_cols != self.m.cols) {
+                self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
+                self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
+                self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
+            }
+
+            if (new_rows * new_cols <= self.m.matrix.len) {
+                self.m.resizeNoAlloc(new_rows, new_cols);
+                self.x.resizeNoAlloc(new_rows, new_cols);
+                self.m_skip.resizeNoAlloc(new_rows, new_cols);
+            } else {
+                try self.m.resizeAlloc(new_rows, new_cols);
+                try self.x.resizeAlloc(new_rows, new_cols);
+                try self.m_skip.resizeAlloc(new_rows, new_cols);
+            }
+            return;
         }
 
         /// Compute matching score
@@ -198,8 +198,8 @@ pub fn AlgorithmType(
             comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
-        ) ?ScoreT {
-            const info = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
+        ) !?ScoreT {
+            const info = try self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return null;
             return info.score;
         }
@@ -216,7 +216,7 @@ pub fn AlgorithmType(
             comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
-        ) ?ScoreInfo {
+        ) !?ScoreInfo {
             if (needle.len == 0) return .{
                 .score = 0,
             };
@@ -224,14 +224,12 @@ pub fn AlgorithmType(
             const rows = needle.len;
             const cols = haystack.len;
 
-            // TODO: resize if needed instead of reallocate
-            self.deallocateMatrixAndBuffer();
-            self.allocateMatrixAndBuffer(cols, rows) catch @panic("Memory error");
+            try self.resize(cols + 1, rows + 1);
 
             // resize the view into memory
-            self.m.resizeNoAlloc(rows + 1, cols + 1);
-            self.x.resizeNoAlloc(rows + 1, cols + 1);
-            self.m_skip.resizeNoAlloc(rows + 1, cols + 1);
+            // self.m.resizeNoAlloc(rows + 1, cols + 1);
+            // self.x.resizeNoAlloc(rows + 1, cols + 1);
+            // self.m_skip.resizeNoAlloc(rows + 1, cols + 1);
 
             const first_match_indices = utils.firstMatchesGeneric(
                 ElType,
@@ -279,8 +277,8 @@ pub fn AlgorithmType(
             comptime funcTable: FunctionTable(@TypeOf(ctx)),
             haystack: []const ElType,
             needle: []const ElType,
-        ) Matches {
-            const s = self.scoreImpl(ctx, funcTable, haystack, needle) orelse
+        ) !Matches {
+            const s = try self.scoreImpl(ctx, funcTable, haystack, needle) orelse
                 return .{ .score = null };
 
             const matches = self.traceback(
@@ -598,16 +596,16 @@ pub const Ascii = struct {
         self: *Ascii,
         haystack: []const u8,
         needle: []const u8,
-    ) ?i32 {
-        return self.alg.score(self, FunctionTable, haystack, needle);
+    ) !?i32 {
+        return try self.alg.score(self, FunctionTable, haystack, needle);
     }
 
     pub fn scoreMatches(
         self: *Ascii,
         haystack: []const u8,
         needle: []const u8,
-    ) Algorithm.Matches {
-        return self.alg.scoreMatches(self, FunctionTable, haystack, needle);
+    ) !Algorithm.Matches {
+        return try self.alg.scoreMatches(self, FunctionTable, haystack, needle);
     }
 };
 
@@ -677,7 +675,7 @@ pub const Unicode = struct {
     }
 
     fn convertString(self: *const Unicode, string: []const u8) ![]const u21 {
-        const nfc_result = self.unicode_toolbox.norm.nfc(self.alg.allocator, string) catch @panic("Cannot normalize string");
+        const nfc_result = try self.unicode_toolbox.norm.nfc(self.alg.allocator, string);
         defer nfc_result.deinit();
 
         var iter = code_point.Iterator{ .bytes = nfc_result.slice };
@@ -753,7 +751,7 @@ pub const Unicode = struct {
         const needle_normal = try self.convertString(needle);
         defer self.alg.allocator.free(needle_normal);
 
-        return self.alg.score(
+        return try self.alg.score(
             self,
             FunctionTable,
             haystack_normal,
@@ -780,7 +778,7 @@ pub const Unicode = struct {
 };
 
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
-    const s = alg.score(haystack, needle);
+    const s = try alg.score(haystack, needle);
     try std.testing.expectEqual(score, s.?);
 }
 
@@ -950,7 +948,7 @@ test "wildcard space" {
 }
 
 fn doTestTraceback(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime matches: []const usize) !void {
-    const s = alg.scoreMatches(haystack, needle);
+    const s = try alg.scoreMatches(haystack, needle);
 
     // const stderr = std.io.getStdErr().writer();
     // try alg.debugPrint(stderr, haystack, needle);
