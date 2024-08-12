@@ -711,16 +711,21 @@ pub const Unicode = struct {
         allocator: std.mem.Allocator,
         opts: Options,
     ) !Unicode {
-        const alg = try Algorithm.init(allocator);
+        var alg = try Algorithm.init(allocator);
+        errdefer alg.deinit();
 
-        const gcd = try GenCatData.init(allocator);
+        var gcd = try GenCatData.init(allocator);
+        errdefer gcd.deinit();
 
         var norm_data: *Normalize.NormData = undefined;
         norm_data = try allocator.create(Normalize.NormData);
+        errdefer norm_data.deinit(); // reverse order is needed to proper deinit
+        errdefer allocator.destroy(norm_data);
         try Normalize.NormData.init(norm_data, allocator);
         const norm = Normalize{ .norm_data = norm_data };
 
-        const cd = try CaseData.init(allocator);
+        var cd = try CaseData.init(allocator);
+        errdefer cd.deinit();
 
         return .{
             .alg = alg,
