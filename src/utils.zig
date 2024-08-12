@@ -1,7 +1,6 @@
 const std = @import("std");
 
-const GenCatData = @import("GenCatData");
-const CaseData = @import("CaseData");
+const UnicodeToolBox = @import("root.zig").UnicodeToolBox;
 
 pub fn digitCount(v: anytype) usize {
     const abs: u32 = @intCast(@abs(v));
@@ -32,27 +31,23 @@ pub const CharacterType = enum {
         };
     }
 
-    pub fn fromUnicode(c: u21, allocator: std.mem.Allocator) CharacterType {
-        const cd = CaseData.init(allocator) catch @panic("Memory error");
-        defer cd.deinit();
-        const gcd = GenCatData.init(allocator) catch @panic("Memory error");
-        defer gcd.deinit();
-        if (cd.isLower(c)) {
+    pub fn fromUnicode(c: u21, unicode_toolbox: UnicodeToolBox) CharacterType {
+        if (unicode_toolbox.cd.isLower(c)) {
             return .Lower;
-        } else if (cd.isUpper(c)) {
+        } else if (unicode_toolbox.cd.isUpper(c)) {
             return .Upper;
-        } else if (gcd.isNumber(c)) {
+        } else if (unicode_toolbox.gcd.isNumber(c)) {
             return .Number;
         } else if (switch (c) {
             ' ', '\\', '/', '|', '(', ')', '[', ']', '{', '}' => true,
             else => false,
         }) {
             return .HardSeperator;
-        } else if (gcd.isSeparator(c)) {
+        } else if (unicode_toolbox.gcd.isSeparator(c)) {
             return .HardSeperator;
-        } else if (gcd.isPunctuation(c) or gcd.isSymbol(c) or gcd.isMark(c)) {
+        } else if (unicode_toolbox.gcd.isPunctuation(c) or unicode_toolbox.gcd.isSymbol(c) or unicode_toolbox.gcd.isMark(c)) {
             return .SoftSeperator;
-        } else if (gcd.isControl(c)) {
+        } else if (unicode_toolbox.gcd.isControl(c)) {
             return .Empty;
         } else {
             return .Lower; // Maybe .Empty instead ?

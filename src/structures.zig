@@ -63,6 +63,12 @@ pub fn MatrixT(comptime T: type) type {
             m.cols = new_cols;
         }
 
+        /// Resize the matrix to a bigger or smaller one. Note that the data will be invalided.
+        pub fn resizeAlloc(m: *Self, new_rows: usize, new_cols: usize) !void {
+            m.matrix = try m.allocator.realloc(m.matrix, new_cols * new_rows);
+            m.resizeNoAlloc(new_rows, new_cols);
+        }
+
         /// Set the currently active region of the matrix to a specific value.
         pub fn fill(m: Self, value: ElementType) void {
             const end = m.rows * m.cols;

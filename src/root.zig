@@ -130,6 +130,8 @@ pub fn AlgorithmType(
             max_haystack: usize,
             max_needle: usize,
         ) !Self {
+
+            // init to a min size, and resize after if needed
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
 
@@ -165,6 +167,50 @@ pub fn AlgorithmType(
             };
         }
 
+        /// Resize matrixs and buffer if it is needed
+        pub fn resizeIfNeeded(self: *Self, max_haystack: usize, max_needle: usize) !void {
+            const new_rows = max_needle + 1;
+            const new_cols = max_haystack + 1;
+
+            if (new_rows <= self.m.rows and new_cols <= self.m.cols) {
+                return;
+            }
+
+            if (new_rows > self.first_match_buffer.len) {
+                self.first_match_buffer = try self.allocator.realloc(self.first_match_buffer, new_rows);
+            }
+            if (new_cols > self.role_bonus.len) {
+                self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
+                self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
+                self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
+            }
+
+            if (new_rows * new_cols > self.m.matrix.len) {
+                try self.m.resizeAlloc(new_rows, new_cols);
+                try self.x.resizeAlloc(new_rows, new_cols);
+                try self.m_skip.resizeAlloc(new_rows, new_cols);
+            }
+            return;
+        }
+
+        /// Force to resize all matrixs and buffer
+        pub fn resize(self: *Self, max_haystack: usize, max_needle: usize) !void {
+            const new_rows = max_needle + 1;
+            const new_cols = max_haystack + 1;
+
+            self.first_match_buffer = try self.allocator.realloc(self.first_match_buffer, new_rows);
+
+            self.role_bonus = try self.allocator.realloc(self.role_bonus, new_cols);
+            self.bonus_buffer = try self.allocator.realloc(self.bonus_buffer, new_cols);
+            self.traceback_buffer = try self.allocator.realloc(self.traceback_buffer, new_cols);
+
+            try self.m.resizeAlloc(new_rows, new_cols);
+            try self.x.resizeAlloc(new_rows, new_cols);
+            try self.m_skip.resizeAlloc(new_rows, new_cols);
+
+            return;
+        }
+
         /// Compute matching score
         pub fn score(
             self: *Self,
@@ -195,6 +241,9 @@ pub fn AlgorithmType(
                 .score = 0,
             };
 
+            std.debug.assert(haystack.len < self.traceback_buffer.len);
+            std.debug.assert(needle.len < self.first_match_buffer.len);
+
             const rows = needle.len;
             const cols = haystack.len;
 
@@ -215,7 +264,7 @@ pub fn AlgorithmType(
             self.reset(rows + 1, cols + 1, first_match_indices);
             self.determineBonuses(ctx, funcTable, haystack);
 
-            try self.populateMatrices(
+            self.populateMatrices(
                 ctx,
                 funcTable,
                 haystack,
@@ -359,7 +408,7 @@ pub fn AlgorithmType(
             haystack: []const ElType,
             needle: []const ElType,
             first_match_indices: []const usize,
-        ) !void {
+        ) void {
             for (1.., needle) |i, n| {
 
                 // how many characters of the haystack do we skip
@@ -493,6 +542,9 @@ pub const Ascii = struct {
         .isEqual = eqlFunc,
     };
 
+    alg: Algorithm,
+    opts: Options,
+
     fn eqlFunc(self: *Ascii, h: u8, n: u8) bool {
         if (n == ' ' and self.opts.wildcard_spaces) {
             return switch (h) {
@@ -547,9 +599,6 @@ pub const Ascii = struct {
         penalty_case_mistmatch: i32 = -2,
     };
 
-    alg: Algorithm,
-    opts: Options,
-
     // public interface
 
     pub fn init(
@@ -559,7 +608,7 @@ pub const Ascii = struct {
         opts: Options,
     ) !Ascii {
         const alg = try Algorithm.init(allocator, max_haystack, max_needle);
-        return .{ .alg = alg, .opts = opts };
+        return Ascii{ .alg = alg, .opts = opts };
     }
 
     pub fn deinit(self: *Ascii) void {
@@ -573,6 +622,7 @@ pub const Ascii = struct {
     ) ?i32 {
         return self.alg.score(self, FunctionTable, haystack, needle);
     }
+
     pub fn scoreMatches(
         self: *Ascii,
         haystack: []const u8,
@@ -580,6 +630,13 @@ pub const Ascii = struct {
     ) Algorithm.Matches {
         return self.alg.scoreMatches(self, FunctionTable, haystack, needle);
     }
+};
+
+pub const UnicodeToolBox = struct {
+    gcd: GenCatData,
+    norm: Normalize,
+    norm_data: *Normalize.NormData,
+    cd: CaseData,
 };
 
 pub const Unicode = struct {
@@ -592,15 +649,18 @@ pub const Unicode = struct {
         .isEqual = eqlFunc,
     };
 
-    fn eqlFunc(a: *Unicode, h: u21, n: u21) bool {
-        if (a.gcd.isSeparator(n) and a.opts.wildcard_spaces) {
-            if (a.gcd.isLetter(h) or a.gcd.isNumber(h) or a.gcd.isSymbol(h)) {
+    fn eqlFunc(self: *Unicode, h: u21, n: u21) bool {
+        if (self.unicode_toolbox.gcd.isSeparator(n) and self.opts.wildcard_spaces) {
+            if (self.unicode_toolbox.gcd.isLetter(h) or
+                self.unicode_toolbox.gcd.isNumber(h) or
+                self.unicode_toolbox.gcd.isSymbol(h))
+            {
                 return true;
             } else {
                 return false;
             }
-        } else if (!a.opts.case_sensitive) {
-            return a.cd.toLower(h) == a.cd.toLower(n);
+        } else if (!self.opts.case_sensitive) {
+            return self.unicode_toolbox.cd.toLower(h) == self.unicode_toolbox.cd.toLower(n);
         } else {
             return h == n;
         }
@@ -626,9 +686,8 @@ pub const Unicode = struct {
         h: u21,
         n: u21,
     ) i32 {
-        const alloc = self.alg.allocator;
-        const p = CharacterType.fromUnicode(h, alloc);
-        const c = CharacterType.fromUnicode(n, alloc);
+        const p = CharacterType.fromUnicode(h, self.unicode_toolbox);
+        const c = CharacterType.fromUnicode(n, self.unicode_toolbox);
 
         return switch (p.roleNextTo(c)) {
             .Head => scores.bonus_head,
@@ -638,19 +697,13 @@ pub const Unicode = struct {
         };
     }
 
-    fn convertString(a: *const Unicode, string: []const u8) ![]const u21 {
-        var norm_data: Normalize.NormData = undefined;
-        try Normalize.NormData.init(&norm_data, a.alg.allocator);
-        defer norm_data.deinit();
-
-        const n = Normalize{ .norm_data = &norm_data };
-
-        const nfc_result = try n.nfc(a.alg.allocator, string);
+    fn convertString(self: *const Unicode, string: []const u8) ![]const u21 {
+        const nfc_result = try self.unicode_toolbox.norm.nfc(self.alg.allocator, string);
         defer nfc_result.deinit();
 
         var iter = code_point.Iterator{ .bytes = nfc_result.slice };
 
-        var converted_string = std.ArrayList(u21).init(a.alg.allocator);
+        var converted_string = std.ArrayList(u21).init(self.alg.allocator);
         defer converted_string.deinit();
 
         while (iter.next()) |c| {
@@ -673,8 +726,7 @@ pub const Unicode = struct {
 
     alg: Algorithm,
     opts: Options,
-    gcd: GenCatData,
-    cd: CaseData,
+    unicode_toolbox: UnicodeToolBox,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -682,27 +734,39 @@ pub const Unicode = struct {
         max_needle: usize,
         opts: Options,
     ) !Unicode {
-        // todo: these can likely be a static singleton that is shared amongst
-        // all instances of the Unicode fuzzy finder
+        var alg = try Algorithm.init(allocator, max_haystack, max_needle);
+        errdefer alg.deinit();
+
         var gcd = try GenCatData.init(allocator);
         errdefer gcd.deinit();
+
+        var norm_data: *Normalize.NormData = undefined;
+        norm_data = try allocator.create(Normalize.NormData);
+        errdefer norm_data.deinit(); // reverse order is needed to proper deinit
+        errdefer allocator.destroy(norm_data);
+        try Normalize.NormData.init(norm_data, allocator);
+        const norm = Normalize{ .norm_data = norm_data };
 
         var cd = try CaseData.init(allocator);
         errdefer cd.deinit();
 
-        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
-
         return .{
             .alg = alg,
             .opts = opts,
-            .gcd = gcd,
-            .cd = cd,
+            .unicode_toolbox = .{
+                .gcd = gcd,
+                .norm = norm,
+                .norm_data = norm_data,
+                .cd = cd,
+            },
         };
     }
 
     pub fn deinit(self: *Unicode) void {
-        self.gcd.deinit();
-        self.cd.deinit();
+        self.unicode_toolbox.gcd.deinit();
+        self.unicode_toolbox.norm_data.deinit();
+        self.alg.allocator.destroy(self.unicode_toolbox.norm_data);
+        self.unicode_toolbox.cd.deinit();
         self.alg.deinit();
     }
 
@@ -729,7 +793,7 @@ pub const Unicode = struct {
         self: *Unicode,
         haystack: []const u8,
         needle: []const u8,
-    ) !Algorithm.Matches {
+    ) Algorithm.Matches {
         const haystack_normal = self.convertString(haystack);
         defer self.allocator.free(haystack_normal);
         const needle_normal = self.convertString(needle);
