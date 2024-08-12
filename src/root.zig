@@ -2,15 +2,19 @@ const std = @import("std");
 const utils = @import("utils.zig");
 const structures = @import("structures.zig");
 
-const code_point = @import("code_point");
-const GenCatData = @import("GenCatData");
-const CaseData = @import("CaseData");
-const Normalize = @import("Normalize");
-
-const Allocator = std.mem.Allocator;
-
 const CharacterType = utils.CharacterType;
 const MatrixT = structures.MatrixT;
+
+pub const Unicode = if (@import("options").unicode)
+    @import("unicode.zig").Unicode
+else
+    @compileError("Not compiled with unicode support");
+
+test "other" {
+    comptime if (@import("options").unicode) {
+        _ = @import("unicode.zig");
+    };
+}
 
 // Matrix Filling: for two sequences a1a2a3..., b1b2b3... we have a reward
 // function
@@ -86,7 +90,7 @@ pub fn AlgorithmType(
         const Matrix = MatrixT(ScoreT);
         const Self = @This();
 
-        fn FunctionTable(
+        pub fn FunctionTable(
             comptime Ctx: type,
         ) type {
             return struct {
@@ -632,188 +636,8 @@ pub const Ascii = struct {
     }
 };
 
-pub const UnicodeToolBox = struct {
-    gcd: GenCatData,
-    norm: Normalize,
-    norm_data: *Normalize.NormData,
-    cd: CaseData,
-};
-
-pub const Unicode = struct {
-    pub const Algorithm = AlgorithmType(u21, i32, .{});
-    pub const Scores = ScoresType(i32);
-
-    const FunctionTable: Algorithm.FunctionTable(*Unicode) = .{
-        .score = scoreFunc,
-        .bonus = bonusFunc,
-        .isEqual = eqlFunc,
-    };
-
-    fn eqlFunc(self: *Unicode, h: u21, n: u21) bool {
-        if (self.unicode_toolbox.gcd.isSeparator(n) and self.opts.wildcard_spaces) {
-            if (self.unicode_toolbox.gcd.isLetter(h) or
-                self.unicode_toolbox.gcd.isNumber(h) or
-                self.unicode_toolbox.gcd.isSymbol(h))
-            {
-                return true;
-            } else {
-                return false;
-            }
-        } else if (!self.opts.case_sensitive) {
-            return self.unicode_toolbox.cd.toLower(h) == self.unicode_toolbox.cd.toLower(n);
-        } else {
-            return h == n;
-        }
-    }
-
-    fn scoreFunc(
-        a: *Unicode,
-        scores: Scores,
-        h: u21,
-        n: u21,
-    ) ?i32 {
-        if (!a.eqlFunc(h, n)) return null;
-
-        if (a.opts.case_penalize and (h != n)) {
-            return scores.score_match + a.opts.penalty_case_mistmatch;
-        }
-        return scores.score_match;
-    }
-
-    fn bonusFunc(
-        self: *Unicode,
-        scores: Scores,
-        h: u21,
-        n: u21,
-    ) i32 {
-        const p = CharacterType.fromUnicode(h, self.unicode_toolbox);
-        const c = CharacterType.fromUnicode(n, self.unicode_toolbox);
-
-        return switch (p.roleNextTo(c)) {
-            .Head => scores.bonus_head,
-            .Camel => scores.bonus_camel,
-            .Break => scores.bonus_break,
-            .Tail => scores.bonus_tail,
-        };
-    }
-
-    fn convertString(self: *const Unicode, string: []const u8) ![]const u21 {
-        const nfc_result = try self.unicode_toolbox.norm.nfc(self.alg.allocator, string);
-        defer nfc_result.deinit();
-
-        var iter = code_point.Iterator{ .bytes = nfc_result.slice };
-
-        var converted_string = std.ArrayList(u21).init(self.alg.allocator);
-        defer converted_string.deinit();
-
-        while (iter.next()) |c| {
-            try converted_string.append(c.code);
-        }
-        return converted_string.toOwnedSlice();
-    }
-
-    pub const Options = struct {
-        case_sensitive: bool = true,
-        case_penalize: bool = false,
-        // treat spaces as wildcards for any kind of boundary
-        // i.e. match with any `[^a-z,A-Z,0-9]`
-        wildcard_spaces: bool = false,
-
-        penalty_case_mistmatch: i32 = -2,
-
-        char_buffer_size: usize = 8192,
-    };
-
-    alg: Algorithm,
-    opts: Options,
-    unicode_toolbox: UnicodeToolBox,
-
-    pub fn init(
-        allocator: std.mem.Allocator,
-        max_haystack: usize,
-        max_needle: usize,
-        opts: Options,
-    ) !Unicode {
-        var alg = try Algorithm.init(allocator, max_haystack, max_needle);
-        errdefer alg.deinit();
-
-        var gcd = try GenCatData.init(allocator);
-        errdefer gcd.deinit();
-
-        var norm_data: *Normalize.NormData = undefined;
-        norm_data = try allocator.create(Normalize.NormData);
-        errdefer norm_data.deinit(); // reverse order is needed to proper deinit
-        errdefer allocator.destroy(norm_data);
-        try Normalize.NormData.init(norm_data, allocator);
-        const norm = Normalize{ .norm_data = norm_data };
-
-        var cd = try CaseData.init(allocator);
-        errdefer cd.deinit();
-
-        return .{
-            .alg = alg,
-            .opts = opts,
-            .unicode_toolbox = .{
-                .gcd = gcd,
-                .norm = norm,
-                .norm_data = norm_data,
-                .cd = cd,
-            },
-        };
-    }
-
-    pub fn deinit(self: *Unicode) void {
-        self.unicode_toolbox.gcd.deinit();
-        self.unicode_toolbox.norm_data.deinit();
-        self.alg.allocator.destroy(self.unicode_toolbox.norm_data);
-        self.unicode_toolbox.cd.deinit();
-        self.alg.deinit();
-    }
-
-    pub fn score(
-        self: *Unicode,
-        haystack: []const u8,
-        needle: []const u8,
-    ) !?i32 {
-        const haystack_normal = try self.convertString(haystack);
-        defer self.alg.allocator.free(haystack_normal);
-
-        const needle_normal = try self.convertString(needle);
-        defer self.alg.allocator.free(needle_normal);
-
-        return self.alg.score(
-            self,
-            FunctionTable,
-            haystack_normal,
-            needle_normal,
-        );
-    }
-
-    pub fn scoreMatches(
-        self: *Unicode,
-        haystack: []const u8,
-        needle: []const u8,
-    ) Algorithm.Matches {
-        const haystack_normal = self.convertString(haystack);
-        defer self.allocator.free(haystack_normal);
-        const needle_normal = self.convertString(needle);
-        defer self.allocator.free(needle_normal);
-        return self.alg.scoreMatches(
-            self,
-            FunctionTable,
-            haystack_normal,
-            needle_normal,
-        );
-    }
-};
-
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
     const s = alg.score(haystack, needle);
-    try std.testing.expectEqual(score, s.?);
-}
-
-fn doTestScoreUnicode(alg: *Unicode, haystack: []const u8, needle: []const u8, comptime score: ?i32) !void {
-    const s = try alg.score(haystack, needle);
     try std.testing.expectEqual(score, s.?);
 }
 
@@ -1009,18 +833,4 @@ test "traceback" {
     try doTestTraceback(&alg, "abcdefg", "abcefg", &.{ 0, 1, 2, 4, 5, 6 });
     try doTestTraceback(&alg, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
     try doTestTraceback(&alg, "./src/main.zig", "main", &.{ 6, 7, 8, 9 });
-}
-
-test "Unicode search" {
-    const o = Unicode.Scores{};
-
-    var alg = try Unicode.init(
-        std.testing.allocator,
-        128,
-        32,
-        .{},
-    );
-    defer alg.deinit();
-
-    try doTestScoreUnicode(&alg, "zig⚡ fast", "⚡", o.score_match);
 }

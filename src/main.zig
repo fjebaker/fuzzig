@@ -1,5 +1,5 @@
 const std = @import("std");
-const fuzzy = @import("root.zig");
+const fuzzig = @import("fuzzig");
 const bmark = @import("benchmarks.zig");
 
 pub fn main() !void {
@@ -8,7 +8,7 @@ pub fn main() !void {
 
     const alloc = gpa.allocator();
 
-    var finder = try fuzzy.Ascii.init(alloc, 6000, 500, .{});
+    var finder = try fuzzig.Ascii.init(alloc, 6000, 500, .{});
     defer finder.deinit();
 
     const scores = try alloc.alloc(i32, LINES.len);
@@ -47,7 +47,7 @@ pub fn main() !void {
     result.printSummary();
 }
 
-pub fn runBmark(finder: *fuzzy.Ascii) void {
+pub fn runBmark(finder: *fuzzig.Ascii) void {
     const score = finder.score(
         "hello world this is a short message about things" ** 100,
         "short abut thns",

@@ -1,6 +1,6 @@
 const std = @import("std");
-
-const UnicodeToolBox = @import("root.zig").UnicodeToolBox;
+const GenCatData = @import("GenCatData");
+const CaseData = @import("CaseData");
 
 pub fn digitCount(v: anytype) usize {
     const abs: u32 = @intCast(@abs(v));
@@ -29,29 +29,6 @@ pub const CharacterType = enum {
             0 => .Empty,
             else => .Lower,
         };
-    }
-
-    pub fn fromUnicode(c: u21, unicode_toolbox: UnicodeToolBox) CharacterType {
-        if (unicode_toolbox.cd.isLower(c)) {
-            return .Lower;
-        } else if (unicode_toolbox.cd.isUpper(c)) {
-            return .Upper;
-        } else if (unicode_toolbox.gcd.isNumber(c)) {
-            return .Number;
-        } else if (switch (c) {
-            ' ', '\\', '/', '|', '(', ')', '[', ']', '{', '}' => true,
-            else => false,
-        }) {
-            return .HardSeperator;
-        } else if (unicode_toolbox.gcd.isSeparator(c)) {
-            return .HardSeperator;
-        } else if (unicode_toolbox.gcd.isPunctuation(c) or unicode_toolbox.gcd.isSymbol(c) or unicode_toolbox.gcd.isMark(c)) {
-            return .SoftSeperator;
-        } else if (unicode_toolbox.gcd.isControl(c)) {
-            return .Empty;
-        } else {
-            return .Lower; // Maybe .Empty instead ?
-        }
     }
 
     const Role = enum {
