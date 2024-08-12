@@ -686,9 +686,9 @@ pub const Unicode = struct {
         defer converted_string.deinit();
 
         while (iter.next()) |c| {
-            converted_string.append(c.code) catch @panic("Memory error");
+            try converted_string.append(c.code);
         }
-        return converted_string.toOwnedSlice() catch @panic("Memory error");
+        return converted_string.toOwnedSlice();
     }
 
     pub const Options = struct {
@@ -699,6 +699,8 @@ pub const Unicode = struct {
         wildcard_spaces: bool = false,
 
         penalty_case_mistmatch: i32 = -2,
+
+        char_buffer_size: usize = 8192,
     };
 
     alg: Algorithm,
@@ -745,10 +747,12 @@ pub const Unicode = struct {
         haystack: []const u8,
         needle: []const u8,
     ) !?i32 {
-        const haystack_normal = self.convertString(haystack);
+        const haystack_normal = try self.convertString(haystack);
         defer self.alg.allocator.free(haystack_normal);
-        const needle_normal = self.convertString(needle);
+
+        const needle_normal = try self.convertString(needle);
         defer self.alg.allocator.free(needle_normal);
+
         return self.alg.score(
             self,
             FunctionTable,
