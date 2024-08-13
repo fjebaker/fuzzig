@@ -176,17 +176,7 @@ pub fn AlgorithmType(
             };
         }
 
-        /// Resize pre-allocated buffers to fit a new maximum haystack and
-        /// needle size
-        pub fn resize(self: *Self, max_haystack: usize, max_needle: usize) !void {
-            const new_rows = max_needle + 1;
-            const new_cols = max_haystack + 1;
-
-            self.first_match_buffer = try self.allocator.realloc(
-                self.first_match_buffer,
-                new_rows,
-            );
-
+        fn resizeCols(self: *Self, new_cols: usize) !void {
             self.role_bonus = try self.allocator.realloc(
                 self.role_bonus,
                 new_cols,
@@ -201,10 +191,33 @@ pub fn AlgorithmType(
                 self.traceback_buffer,
                 new_cols,
             );
+            return;
+        }
 
+        fn resizeRows(self: *Self, new_rows: usize) !void {
+            self.first_match_buffer = try self.allocator.realloc(
+                self.first_match_buffer,
+                new_rows,
+            );
+            return;
+        }
+
+        fn resizeMatrixs(self: *Self, new_rows: usize, new_cols: usize) !void {
             try self.m.resizeAlloc(new_rows, new_cols);
             try self.x.resizeAlloc(new_rows, new_cols);
             try self.m_skip.resizeAlloc(new_rows, new_cols);
+            return;
+        }
+
+        /// Resize pre-allocated buffers to fit a new maximum haystack and
+        /// needle size
+        pub fn resize(self: *Self, max_haystack: usize, max_needle: usize) !void {
+            const new_rows = max_needle + 1;
+            const new_cols = max_haystack + 1;
+
+            try self.resizeRows(new_rows);
+            try self.resizeCols(new_cols);
+            try self.resizeMatrixs(new_rows, new_cols);
 
             self.max_haystack = max_haystack;
             self.max_needle = max_needle;
@@ -220,34 +233,16 @@ pub fn AlgorithmType(
                 return;
             }
 
-            if (new_rows > self.max_needle + 1) {
-                self.first_match_buffer = try self.allocator.realloc(
-                    self.first_match_buffer,
-                    new_rows,
-                );
+            if (max_needle > self.max_needle) {
+                try self.resizeRows(new_rows);
                 self.max_needle = max_needle;
             }
-            if (new_cols > self.max_haystack + 1) {
-                self.role_bonus = try self.allocator.realloc(
-                    self.role_bonus,
-                    new_cols,
-                );
-
-                self.bonus_buffer = try self.allocator.realloc(
-                    self.bonus_buffer,
-                    new_cols,
-                );
-
-                self.traceback_buffer = try self.allocator.realloc(
-                    self.traceback_buffer,
-                    new_cols,
-                );
+            if (max_haystack > self.max_haystack) {
+                try self.resizeCols(new_cols);
                 self.max_haystack = max_haystack;
             }
-            if (new_cols * new_rows < (self.max_haystack + 1) * (self.max_needle + 1)) {
-                try self.m.resizeAlloc(new_rows, new_cols);
-                try self.x.resizeAlloc(new_rows, new_cols);
-                try self.m_skip.resizeAlloc(new_rows, new_cols);
+            if (new_cols * new_rows > self.m.matrix.len) {
+                try self.resizeMatrixs(new_rows, new_cols);
             }
             return;
         }
@@ -295,7 +290,7 @@ pub fn AlgorithmType(
             };
 
             std.debug.assert(haystack.len <= self.maximumHaystackLen());
-            std.debug.assert(needle.len < self.maximumNeedleLen());
+            std.debug.assert(needle.len <= self.maximumNeedleLen());
 
             const rows = needle.len;
             const cols = haystack.len;
@@ -691,6 +686,12 @@ pub const Ascii = struct {
     pub fn resize(self: *Ascii, max_haystack: usize, max_needle: usize) !void {
         try self.alg.resize(max_haystack, max_needle);
     }
+
+    /// Ensure that there is enought memory allocated, and allocate memory only if needed.
+    /// Will never shrink memory.
+    pub fn ensureSize(self: *Ascii, max_haystack: usize, max_needle: usize) !void {
+        try self.alg.ensureSize(max_haystack, max_needle);
+    }
 };
 
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
@@ -890,4 +891,30 @@ test "traceback" {
     try doTestTraceback(&alg, "abcdefg", "abcefg", &.{ 0, 1, 2, 4, 5, 6 });
     try doTestTraceback(&alg, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
     try doTestTraceback(&alg, "./src/main.zig", "main", &.{ 6, 7, 8, 9 });
+}
+
+test "resize" {
+    const o = Ascii.Scores{};
+    var alg = try Ascii.init(
+        std.testing.allocator,
+        16,
+        4,
+        .{},
+    );
+    defer alg.deinit();
+
+    try alg.resize("ab".len, "ab".len);
+    try doTestScore(&alg, "ab", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    try alg.ensureSize(("ab" ** 4).len, "ab".len);
+    try doTestScore(&alg, "ab" ** 4, "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    try alg.resize("abc".len, "ab".len);
+    try doTestScore(&alg, "abc", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
 }
