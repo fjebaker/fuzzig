@@ -861,3 +861,35 @@ test "traceback" {
     try doTestTraceback(&alg, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
     try doTestTraceback(&alg, "./src/main.zig", "main", &.{ 6, 7, 8, 9 });
 }
+
+test "resize" {
+    const o = Ascii.Scores{};
+    var alg = try Ascii.init(
+        std.testing.allocator,
+        16,
+        4,
+        .{},
+    );
+    defer alg.deinit();
+
+    try std.testing.expect(alg.hasSize(2, 2));
+    try alg.resize(2, 2);
+    try std.testing.expect(alg.hasSize(2, 2));
+    try doTestScore(&alg, "ab", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    try std.testing.expect(!alg.hasSize(8, 2));
+    try alg.resize(8, 2);
+    try std.testing.expect(alg.hasSize(8, 2));
+    try doTestScore(&alg, "ab" ** 4, "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    try std.testing.expect(alg.hasSize(3, 2));
+    try alg.resize("abc".len, "ab".len);
+    try std.testing.expect(alg.hasSize(3, 2));
+    try doTestScore(&alg, "abc", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+}
