@@ -882,6 +882,10 @@ test "resize" {
     try std.testing.expect(!alg.hasSize(8, 2));
     try alg.resize(8, 2);
     try std.testing.expect(alg.hasSize(8, 2));
+    // larger sizes should fail
+    try std.testing.expect(!alg.hasSize(8, 3));
+    // smaller sizes should be fine
+    try std.testing.expect(alg.hasSize(2, 1));
     try doTestScore(&alg, "ab" ** 4, "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive);
