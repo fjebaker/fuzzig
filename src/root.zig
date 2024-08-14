@@ -896,4 +896,7 @@ test "resize" {
     try doTestScore(&alg, "abc", "ab", o.score_match * 2 +
         (o.bonus_head * o.bonus_first_character_multiplier) +
         o.bonus_consecutive);
+
+    // normally works
+    try alg.resize(0, 0);
 }
