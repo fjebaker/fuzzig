@@ -210,13 +210,10 @@ pub fn AlgorithmType(
             self.max_needle = max_needle;
         }
 
-        // Check is there is enough memory allocated
-        pub fn hasSize(self: *Self, max_haystack: usize, max_needle: usize) bool {
-            if (self.max_haystack < max_haystack or self.max_needle < max_needle) {
-                return false;
-            } else {
-                return true;
-            }
+        // Check if buffers have sufficient memory for a given haystack and
+        // needle length.
+        pub fn hasSize(self: *const Self, max_haystack: usize, max_needle: usize) bool {
+            return (max_haystack <= self.max_haystack) and (max_needle <= self.max_needle);
         }
 
         /// Compute matching score
@@ -262,7 +259,7 @@ pub fn AlgorithmType(
             };
 
             std.debug.assert(haystack.len <= self.maximumHaystackLen());
-            std.debug.assert(needle.len < self.maximumNeedleLen());
+            std.debug.assert(needle.len <= self.maximumNeedleLen());
 
             const rows = needle.len;
             const cols = haystack.len;
@@ -659,8 +656,9 @@ pub const Ascii = struct {
         try self.alg.resize(max_haystack, max_needle);
     }
 
-    // Check is there is enough memory allocated
-    pub fn hasSize(self: *Ascii, max_haystack: usize, max_needle: usize) bool {
+    // Check if buffers have sufficient memory for a given haystack and
+    // needle length.
+    pub fn hasSize(self: *const Ascii, max_haystack: usize, max_needle: usize) bool {
         return self.alg.hasSize(max_haystack, max_needle);
     }
 };

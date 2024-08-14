@@ -220,8 +220,9 @@ pub const Unicode = struct {
         try self.alg.resize(max_haystack, max_needle);
     }
 
-    // Check is there is enough memory allocated
-    pub fn hasSize(self: *Unicode, max_haystack: usize, max_needle: usize) bool {
+    // Check if buffers have sufficient memory for a given haystack and
+    // needle length.
+    pub fn hasSize(self: *const Unicode, max_haystack: usize, max_needle: usize) bool {
         return self.alg.hasSize(max_haystack, max_needle);
     }
 };
