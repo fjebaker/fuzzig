@@ -219,6 +219,11 @@ pub const Unicode = struct {
     pub fn resize(self: *Unicode, max_haystack: usize, max_needle: usize) !void {
         try self.alg.resize(max_haystack, max_needle);
     }
+
+    // Check is there is enough memory allocated
+    pub fn hasSize(self: *Unicode, max_haystack: usize, max_needle: usize) bool {
+        return self.alg.hasSize(max_haystack, max_needle);
+    }
 };
 
 fn doTestScoreUnicode(

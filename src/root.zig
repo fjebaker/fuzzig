@@ -210,6 +210,15 @@ pub fn AlgorithmType(
             self.max_needle = max_needle;
         }
 
+        // Check is there is enough memory allocated
+        pub fn hasSize(self: *Self, max_haystack: usize, max_needle: usize) bool {
+            if (self.max_haystack < max_haystack or self.max_needle < max_needle) {
+                return false;
+            } else {
+                return true;
+            }
+        }
+
         /// Compute matching score
         pub fn score(
             self: *Self,
@@ -648,6 +657,11 @@ pub const Ascii = struct {
     /// needle size
     pub fn resize(self: *Ascii, max_haystack: usize, max_needle: usize) !void {
         try self.alg.resize(max_haystack, max_needle);
+    }
+
+    // Check is there is enough memory allocated
+    pub fn hasSize(self: *Ascii, max_haystack: usize, max_needle: usize) bool {
+        return self.alg.hasSize(max_haystack, max_needle);
     }
 };
 
