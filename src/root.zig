@@ -210,6 +210,12 @@ pub fn AlgorithmType(
             self.max_needle = max_needle;
         }
 
+        // Check if buffers have sufficient memory for a given haystack and
+        // needle length.
+        pub fn hasSize(self: *const Self, max_haystack: usize, max_needle: usize) bool {
+            return (max_haystack <= self.max_haystack) and (max_needle <= self.max_needle);
+        }
+
         /// Compute matching score
         pub fn score(
             self: *Self,
@@ -253,7 +259,7 @@ pub fn AlgorithmType(
             };
 
             std.debug.assert(haystack.len <= self.maximumHaystackLen());
-            std.debug.assert(needle.len < self.maximumNeedleLen());
+            std.debug.assert(needle.len <= self.maximumNeedleLen());
 
             const rows = needle.len;
             const cols = haystack.len;
@@ -649,6 +655,12 @@ pub const Ascii = struct {
     pub fn resize(self: *Ascii, max_haystack: usize, max_needle: usize) !void {
         try self.alg.resize(max_haystack, max_needle);
     }
+
+    // Check if buffers have sufficient memory for a given haystack and
+    // needle length.
+    pub fn hasSize(self: *const Ascii, max_haystack: usize, max_needle: usize) bool {
+        return self.alg.hasSize(max_haystack, max_needle);
+    }
 };
 
 fn doTestScore(alg: *Ascii, haystack: []const u8, needle: []const u8, comptime score: i32) !void {
@@ -848,4 +860,43 @@ test "traceback" {
     try doTestTraceback(&alg, "abcdefg", "abcefg", &.{ 0, 1, 2, 4, 5, 6 });
     try doTestTraceback(&alg, "A" ++ "a" ** 20 ++ "B", "AB", &.{ 0, 21 });
     try doTestTraceback(&alg, "./src/main.zig", "main", &.{ 6, 7, 8, 9 });
+}
+
+test "resize" {
+    const o = Ascii.Scores{};
+    var alg = try Ascii.init(
+        std.testing.allocator,
+        16,
+        4,
+        .{},
+    );
+    defer alg.deinit();
+
+    try std.testing.expect(alg.hasSize(2, 2));
+    try alg.resize(2, 2);
+    try std.testing.expect(alg.hasSize(2, 2));
+    try doTestScore(&alg, "ab", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    try std.testing.expect(!alg.hasSize(8, 2));
+    try alg.resize(8, 2);
+    try std.testing.expect(alg.hasSize(8, 2));
+    // larger sizes should fail
+    try std.testing.expect(!alg.hasSize(8, 3));
+    // smaller sizes should be fine
+    try std.testing.expect(alg.hasSize(2, 1));
+    try doTestScore(&alg, "ab" ** 4, "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    try std.testing.expect(alg.hasSize(3, 2));
+    try alg.resize("abc".len, "ab".len);
+    try std.testing.expect(alg.hasSize(3, 2));
+    try doTestScore(&alg, "abc", "ab", o.score_match * 2 +
+        (o.bonus_head * o.bonus_first_character_multiplier) +
+        o.bonus_consecutive);
+
+    // normally works
+    try alg.resize(0, 0);
 }
