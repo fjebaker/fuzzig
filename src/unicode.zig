@@ -138,7 +138,7 @@ pub const Unicode = struct {
         max_needle: usize,
         opts: Options,
     ) !Unicode {
-        const alg = try Algorithm.init(allocator, max_haystack, max_needle, opts.scores);
+        var alg = try Algorithm.init(allocator, max_haystack, max_needle, opts.scores);
         errdefer alg.deinit();
 
         var gcd = try GenCatData.init(allocator);
