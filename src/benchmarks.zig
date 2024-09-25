@@ -28,9 +28,9 @@ pub const BenchmarkResult = struct {
 };
 
 fn invoke(comptime func: anytype, args: std.meta.ArgsTuple(@TypeOf(func))) void {
-    const ReturnType = @typeInfo(@TypeOf(func)).Fn.return_type.?;
+    const ReturnType = @typeInfo(@TypeOf(func)).@"fn".return_type.?;
     switch (@typeInfo(ReturnType)) {
-        .ErrorUnion => {
+        .error_union => {
             _ = @call(.never_inline, func, args) catch {
                 // std.debug.panic("Benchmarked function returned error {s}", .{err});
             };
