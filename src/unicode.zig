@@ -38,7 +38,7 @@ fn charFromUnicode(c: u21, cd: CaseData, gcd: GenCatData) CharacterType {
 }
 
 pub const Unicode = struct {
-    pub const Algorithm = AlgorithmType(u21, i32, .{});
+    pub const Algorithm = AlgorithmType(u21, i32);
     pub const Scores = ScoresType(i32);
 
     const FunctionTable: Algorithm.FunctionTable(*Unicode) = .{
@@ -120,6 +120,8 @@ pub const Unicode = struct {
         penalty_case_mistmatch: i32 = -2,
 
         char_buffer_size: usize = 8192,
+
+        scores: Scores = .{},
     };
 
     alg: Algorithm,
@@ -136,7 +138,7 @@ pub const Unicode = struct {
         max_needle: usize,
         opts: Options,
     ) !Unicode {
-        var alg = try Algorithm.init(allocator, max_haystack, max_needle);
+        const alg = try Algorithm.init(allocator, max_haystack, max_needle, opts.scores);
         errdefer alg.deinit();
 
         var gcd = try GenCatData.init(allocator);

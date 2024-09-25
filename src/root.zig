@@ -84,8 +84,8 @@ pub fn ScoresType(comptime ScoreT: type) type {
 pub fn AlgorithmType(
     comptime ElType: type,
     comptime ScoreT: type,
-    comptime scores: ScoresType(ScoreT),
 ) type {
+    const Scores = ScoresType(ScoreT);
     return struct {
         const Matrix = MatrixT(ScoreT);
         const Self = @This();
@@ -120,6 +120,7 @@ pub fn AlgorithmType(
         max_needle: usize,
 
         allocator: std.mem.Allocator,
+        scores: Scores,
 
         pub fn deinit(self: *Self) void {
             self.m.deinit();
@@ -136,6 +137,7 @@ pub fn AlgorithmType(
             allocator: std.mem.Allocator,
             max_haystack: usize,
             max_needle: usize,
+            scores: Scores,
         ) !Self {
             const rows = max_needle + 1;
             const cols = max_haystack + 1;
@@ -173,6 +175,7 @@ pub fn AlgorithmType(
                 .max_needle = max_needle,
 
                 .allocator = allocator,
+                .scores = scores,
             };
         }
 
@@ -366,13 +369,13 @@ pub fn AlgorithmType(
         ) void {
             var prev: ElType = 0;
             for (1.., haystack) |i, h| {
-                self.role_bonus[i] = funcTable.bonus(ctx, scores, prev, h);
+                self.role_bonus[i] = funcTable.bonus(ctx, self.scores, prev, h);
                 prev = h;
             }
 
             if (self.role_bonus.len > 1) {
                 self.role_bonus[1] = self.role_bonus[1] *
-                    scores.bonus_first_character_multiplier;
+                    self.scores.bonus_first_character_multiplier;
             }
         }
 
@@ -391,8 +394,8 @@ pub fn AlgorithmType(
             for (1..rows) |i| {
                 if (first_match_indices.len <= i - 1) break;
                 const j = first_match_indices[i - 1];
-                self.m.set(i, j, scores.default_score);
-                self.x.set(i, j, scores.default_score);
+                self.m.set(i, j, self.scores.default_score);
+                self.x.set(i, j, self.scores.default_score);
             }
 
             @memset(self.role_bonus[0..cols], 0);
@@ -437,7 +440,7 @@ pub fn AlgorithmType(
                     // start by updating the M matrix
 
                     // compute score
-                    if (funcTable.score(ctx, scores, h, n)) |current| {
+                    if (funcTable.score(ctx, self.scores, h, n)) |current| {
                         const prev_bonus = self.bonus_buffer[j - 1];
 
                         // role bonus for current character
@@ -449,7 +452,7 @@ pub fn AlgorithmType(
                         // const prev_matched = prev_score_match > 0;
                         const prev_matched = !self.m_skip.get(i - 1, j - 1);
                         const consecutive_bonus = if (prev_matched)
-                            scores.bonus_consecutive
+                            self.scores.bonus_consecutive
                         else
                             0;
 
@@ -471,7 +474,7 @@ pub fn AlgorithmType(
                             self.m.set(i, j, score_skip);
                         }
                     } else {
-                        self.m.set(i, j, scores.default_score);
+                        self.m.set(i, j, self.scores.default_score);
                         self.bonus_buffer[j] = 0;
                     }
 
@@ -479,13 +482,13 @@ pub fn AlgorithmType(
 
                     // cost of starting a new gap
                     const x_start =
-                        scores.score_gap_start +
-                        scores.score_gap_extension +
+                        self.scores.score_gap_start +
+                        self.scores.score_gap_extension +
                         self.m.get(i, j - 1); // M[i,j-1]
 
                     // cost of extending
                     const x_extend =
-                        scores.score_gap_extension +
+                        self.scores.score_gap_extension +
                         self.x.get(i, j - 1); // X[i,j-1]
 
                     if (x_start >= x_extend) {
@@ -550,7 +553,7 @@ pub fn AlgorithmType(
 }
 
 pub const Ascii = struct {
-    pub const Algorithm = AlgorithmType(u8, i32, .{});
+    pub const Algorithm = AlgorithmType(u8, i32);
     pub const Scores = ScoresType(i32);
 
     const FunctionTable: Algorithm.FunctionTable(*Ascii) = .{
@@ -611,6 +614,8 @@ pub const Ascii = struct {
         wildcard_spaces: bool = false,
 
         penalty_case_mistmatch: i32 = -2,
+
+        scores: Scores = .{},
     };
 
     alg: Algorithm,
@@ -624,7 +629,7 @@ pub const Ascii = struct {
         max_needle: usize,
         opts: Options,
     ) !Ascii {
-        const alg = try Algorithm.init(allocator, max_haystack, max_needle);
+        const alg = try Algorithm.init(allocator, max_haystack, max_needle, opts.scores);
         return Ascii{ .alg = alg, .opts = opts };
     }
 
