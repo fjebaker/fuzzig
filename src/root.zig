@@ -5,15 +5,10 @@ const structures = @import("structures.zig");
 const CharacterType = utils.CharacterType;
 const MatrixT = structures.MatrixT;
 
-pub const Unicode = if (@import("options").unicode)
-    @import("unicode.zig").Unicode
-else
-    @compileError("Not compiled with unicode support");
+pub const Unicode = @import("unicode.zig").Unicode;
 
 test "other" {
-    comptime if (@import("options").unicode) {
-        _ = @import("unicode.zig");
-    };
+    _ = @import("unicode.zig");
 }
 
 // Matrix Filling: for two sequences a1a2a3..., b1b2b3... we have a reward
