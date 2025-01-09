@@ -63,6 +63,8 @@ The module defines an `Algorithm` generic type, which accepts the element type o
 
 The library was written with Zig 0.12.0-dev.3541+05b185811, but there is likely a lot of flexibility with versioning.
 
+- Currently supported version: Zig 0.14.0-dev.2628+5b5c60f43
+
 To use in a Zig project, add it to your `build.zig.zon`
 
 ```zig
