@@ -2,6 +2,8 @@
 
 Fuzzy finder algorithms in Zig based on the [Smith-Waterman algorithm](https://en.wikipedia.org/wiki/Smith%E2%80%93Waterman_algorithm), inspired by [fzf](https://github.com/junegunn/fzf).
 
+For Unicode support, use the [unicode branch](https://github.com/fjebaker/unicode/tree/unicode).
+
 ## Example
 
 ```zig
@@ -56,8 +58,6 @@ The module defines an `Algorithm` generic type, which accepts the element type o
 
 - Algorithms only have `score` and `scoreMatches` as public functions.
 - If not matches are detected, the score will be `null`.
-
-This package currently implements ASCII and Unicode (compile with `-Dunicode`) fuzzy finders. The fuzzy finder implementation should be flexible enough to extend to other data types or character encodings in downstream packages by providing your own wrapper around `AlgorithmType`. See the ASCII and Unicode implementations for examples.
 
 ## Usage
 
