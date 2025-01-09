@@ -2,7 +2,7 @@
 
 Fuzzy finder algorithms in Zig based on the [Smith-Waterman algorithm](https://en.wikipedia.org/wiki/Smith%E2%80%93Waterman_algorithm), inspired by [fzf](https://github.com/junegunn/fzf).
 
-For Unicode support, use the [unicode branch](https://github.com/fjebaker/unicode/tree/unicode).
+For Unicode support, use the [unicode branch](https://github.com/fjebaker/fuzzig/tree/unicode).
 
 ## Example
 

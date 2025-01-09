@@ -48,10 +48,17 @@ pub fn main() !void {
 }
 
 pub fn runBmark(finder: *fuzzig.Ascii) void {
-    const score = finder.score(
-        "hello world this is a short message about things" ** 100,
-        "short abut thns",
-    ).?;
+    // const score = finder.score(
+    //     "hello world this is a short message about things" ** 100,
+    //     "short abut thns",
+    // ).?;
+    const haystacks = .{
+        "print", "println", "prelude", "println!", "prefetch", "prefix", "prefix!", "print!",
+    };
+    var score: ?i32 = null;
+    inline for (haystacks) |hs| {
+        score = finder.score(hs, "pre");
+    }
     std.mem.doNotOptimizeAway(score);
 }
 
