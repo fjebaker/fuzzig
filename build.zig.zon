@@ -1,5 +1,6 @@
 .{
-    .name = "fuzzig",
+    .name = .fuzzig,
+    .fingerprint = 0x6450ab308a312d26,
     .version = "0.1.1",
     .dependencies = .{},
     .paths = .{
