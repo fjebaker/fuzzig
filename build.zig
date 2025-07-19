@@ -14,9 +14,7 @@ pub fn build(b: *std.Build) void {
     );
 
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = mod,
     });
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
@@ -26,11 +24,15 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "fuzzig",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "fuzzig", .module = mod },
+            },
+        }),
     });
-    exe.root_module.addImport("fuzzig", mod);
 
     const run_cmd = b.addRunArtifact(exe);
     const benchmark_step = b.step("benchmark", "Run benchmarks.");
