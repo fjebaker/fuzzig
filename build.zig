@@ -4,23 +4,34 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zg = b.lazyDependency("zg", .{
-        .target = target,
-        .optimize = optimize,
-    });
+    const options = b.addOptions();
+    const with_unicode = b.option(
+        bool,
+        "unicode",
+        "Build with Unicode support (fetches extra dependencies)",
+    ) orelse false;
+    options.addOption(bool, "unicode", with_unicode);
 
     const mod = b.addModule("fuzzig", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "options", .module = options.createModule() },
+        },
     });
 
-    if (zg) |zg_dep| {
-        mod.addImport("code_point", zg_dep.module("code_point"));
-        mod.addImport("GeneralCategories", zg_dep.module("GeneralCategories"));
-        mod.addImport("LetterCasing", zg_dep.module("LetterCasing"));
-        mod.addImport("Normalize", zg_dep.module("Normalize"));
-        mod.addImport("CaseFolding", zg_dep.module("CaseFolding"));
+    if (with_unicode) {
+        if (b.lazyDependency("zg", .{
+            .target = target,
+            .optimize = optimize,
+        })) |zg| {
+            mod.addImport("code_point", zg.module("code_point"));
+            mod.addImport("GeneralCategories", zg.module("GeneralCategories"));
+            mod.addImport("LetterCasing", zg.module("LetterCasing"));
+            mod.addImport("Normalize", zg.module("Normalize"));
+            mod.addImport("CaseFolding", zg.module("CaseFolding"));
+        }
     }
 
     const lib_unit_tests = b.addTest(.{

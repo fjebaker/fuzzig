@@ -2,13 +2,20 @@ const std = @import("std");
 const utils = @import("utils.zig");
 const structures = @import("structures.zig");
 
+const options = @import("options");
+
 const CharacterType = utils.CharacterType;
 const MatrixT = structures.MatrixT;
 
-pub const Unicode = @import("unicode.zig").Unicode;
+pub const Unicode = if (options.unicode)
+    @import("unicode.zig").Unicode
+else
+    @compileError("For unicode, must compile fuzzig with the unicode option");
 
 test "other" {
-    _ = @import("unicode.zig");
+    comptime if (options.unicode) {
+        _ = @import("unicode.zig");
+    };
 }
 
 // Matrix Filling: for two sequences a1a2a3..., b1b2b3... we have a reward
