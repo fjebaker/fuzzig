@@ -50,6 +50,9 @@ The traceback shows the indices of the haystack that were matched, useful for ge
 
 See the [`AsciiOptions` struct](https://github.com/fjebaker/fuzzig/blob/a78afddec30b547643604aafaee202db6fc878f1/src/root.zig#L460-L466) for a list of available options.
 
+> [!NOTE]
+> For Unicode support via [zg](https://codeberg.org/atman/zg), use `fuzzig.Unicode` instead.
+
 ## Design
 
 The module defines an `Algorithm` generic type, which accepts the element type of the array to be fuzzy searched, the score type and values, and an algorithm implementation. The implementation must define an `eqlFunc`, a `scoreFunc` and a `bonusFunc` used to test for equality between tokens, for determining the score of two matching tokens, and for determining any in-places bonuses respectively.
@@ -81,7 +84,6 @@ Then add the module to your build step in `build.zig`:
 ```zig
     // ...
     const fuzzig = b.dependency("fuzzig", .{}).module("fuzzig");
-
     my_exe_or_lib.root_module.addImport("fuzzig", fuzzig);
     // ...
 ```
