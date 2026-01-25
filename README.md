@@ -51,7 +51,7 @@ The traceback shows the indices of the haystack that were matched, useful for ge
 See the [`AsciiOptions` struct](https://github.com/fjebaker/fuzzig/blob/a78afddec30b547643604aafaee202db6fc878f1/src/root.zig#L460-L466) for a list of available options.
 
 > [!NOTE]
-> For Unicode support via [zg](https://codeberg.org/atman/zg), use `fuzzig.Unicode` instead.
+> For Unicode support via [zg](https://codeberg.org/atman/zg), use `fuzzig.Unicode` instead. Make sure to compile with either `-Dunicode` or by passing the `.unicode = true` option to the build dependency.
 
 ## Design
 
