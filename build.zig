@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zg = b.dependency("zg", .{
+    const zg = b.lazyDependency("zg", .{
         .target = target,
         .optimize = optimize,
     });
@@ -15,11 +15,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    mod.addImport("code_point", zg.module("code_point"));
-    mod.addImport("GeneralCategories", zg.module("GeneralCategories"));
-    mod.addImport("LetterCasing", zg.module("LetterCasing"));
-    mod.addImport("Normalize", zg.module("Normalize"));
-    mod.addImport("CaseFolding", zg.module("CaseFolding"));
+    if (zg) |zg_dep| {
+        mod.addImport("code_point", zg_dep.module("code_point"));
+        mod.addImport("GeneralCategories", zg_dep.module("GeneralCategories"));
+        mod.addImport("LetterCasing", zg_dep.module("LetterCasing"));
+        mod.addImport("Normalize", zg_dep.module("Normalize"));
+        mod.addImport("CaseFolding", zg_dep.module("CaseFolding"));
+    }
 
     const lib_unit_tests = b.addTest(.{
         .root_module = mod,
