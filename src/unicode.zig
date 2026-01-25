@@ -4,8 +4,8 @@ const utils = @import("utils.zig");
 const structures = @import("structures.zig");
 
 const code_point = @import("code_point");
-const GenCatData = @import("GenCatData");
-const CaseData = @import("CaseData");
+const GeneralCategories = @import("GeneralCategories");
+const LetterCasing = @import("LetterCasing");
 const Normalize = @import("Normalize");
 
 const CharacterType = utils.CharacterType;
@@ -14,7 +14,7 @@ const MatrixT = structures.MatrixT;
 const AlgorithmType = root.AlgorithmType;
 const ScoresType = root.ScoresType;
 
-fn charFromUnicode(c: u21, cd: CaseData, gcd: GenCatData) CharacterType {
+fn charFromUnicode(c: u21, cd: LetterCasing, gcd: GeneralCategories) CharacterType {
     if (cd.isLower(c)) {
         return .Lower;
     } else if (cd.isUpper(c)) {
@@ -97,17 +97,17 @@ pub const Unicode = struct {
 
     fn convertString(self: *const Unicode, string: []const u8) ![]const u21 {
         const nfc_result = try self.norm.nfc(self.alg.allocator, string);
-        defer nfc_result.deinit();
+        defer nfc_result.deinit(self.alg.allocator);
 
         var iter = code_point.Iterator{ .bytes = nfc_result.slice };
 
-        var converted_string = std.ArrayList(u21).init(self.alg.allocator);
-        defer converted_string.deinit();
+        var converted_string = std.ArrayList(u21).empty;
+        defer converted_string.deinit(self.alg.allocator);
 
         while (iter.next()) |c| {
-            try converted_string.append(c.code);
+            try converted_string.append(self.alg.allocator, c.code);
         }
-        return converted_string.toOwnedSlice();
+        return converted_string.toOwnedSlice(self.alg.allocator);
     }
 
     pub const Options = struct {
@@ -127,10 +127,9 @@ pub const Unicode = struct {
     alg: Algorithm,
     opts: Options,
     // unicode specific things
-    gcd: GenCatData,
+    gcd: GeneralCategories,
     norm: Normalize,
-    norm_data_ptr: *Normalize.NormData,
-    cd: CaseData,
+    cd: LetterCasing,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -141,36 +140,28 @@ pub const Unicode = struct {
         var alg = try Algorithm.init(allocator, max_haystack, max_needle, opts.scores);
         errdefer alg.deinit();
 
-        var gcd = try GenCatData.init(allocator);
-        errdefer gcd.deinit();
+        var gcd = try GeneralCategories.init(allocator);
+        errdefer gcd.deinit(allocator);
 
-        var norm: Normalize = undefined;
-        const norm_data_ptr = try allocator.create(Normalize.NormData);
-        errdefer allocator.destroy(norm_data_ptr);
+        var norm: Normalize = try Normalize.init(allocator);
+        errdefer norm.deinit(allocator);
 
-        try Normalize.NormData.init(norm_data_ptr, allocator);
-        errdefer norm_data_ptr.deinit();
-
-        norm.norm_data = norm_data_ptr;
-
-        var cd = try CaseData.init(allocator);
-        errdefer cd.deinit();
+        var cd = try LetterCasing.init(allocator);
+        errdefer cd.deinit(allocator);
 
         return .{
             .alg = alg,
             .opts = opts,
             .gcd = gcd,
             .norm = norm,
-            .norm_data_ptr = norm_data_ptr,
             .cd = cd,
         };
     }
 
     pub fn deinit(self: *Unicode) void {
-        self.cd.deinit();
-        self.gcd.deinit();
-        self.norm_data_ptr.deinit();
-        self.alg.allocator.destroy(self.norm_data_ptr);
+        self.cd.deinit(self.alg.allocator);
+        self.gcd.deinit(self.alg.allocator);
+        self.norm.deinit(self.alg.allocator);
         self.alg.deinit();
     }
 

@@ -9,25 +9,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const mod = b.addModule("fuzzig", .{ .root_source_file = b.path("src/root.zig") });
-
-    mod.addImport("code_point", zg.module("code_point"));
-    mod.addImport("GenCatData", zg.module("GenCatData"));
-    mod.addImport("CaseData", zg.module("CaseData"));
-    mod.addImport("Normalize", zg.module("Normalize"));
-    mod.addImport("CaseFold", zg.module("CaseFold"));
-
-    const lib_unit_tests = b.addTest(.{
+    const mod = b.addModule("fuzzig", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    lib_unit_tests.root_module.addImport("code_point", zg.module("code_point"));
-    lib_unit_tests.root_module.addImport("GenCatData", zg.module("GenCatData"));
-    lib_unit_tests.root_module.addImport("CaseData", zg.module("CaseData"));
-    lib_unit_tests.root_module.addImport("Normalize", zg.module("Normalize"));
-    lib_unit_tests.root_module.addImport("CaseFold", zg.module("CaseFold"));
+    mod.addImport("code_point", zg.module("code_point"));
+    mod.addImport("GeneralCategories", zg.module("GeneralCategories"));
+    mod.addImport("LetterCasing", zg.module("LetterCasing"));
+    mod.addImport("Normalize", zg.module("Normalize"));
+    mod.addImport("CaseFolding", zg.module("CaseFolding"));
+
+    const lib_unit_tests = b.addTest(.{
+        .root_module = mod,
+    });
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -35,13 +31,16 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lib_unit_tests.step);
 
     const exe = b.addExecutable(.{
-        .name = "fuzzig",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .name = "fuzzig-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "fuzzig", .module = mod },
+            },
+        }),
     });
-
-    exe.root_module.addImport("fuzzig", mod);
 
     const run_cmd = b.addRunArtifact(exe);
     const benchmark_step = b.step("benchmark", "Run benchmarks.");

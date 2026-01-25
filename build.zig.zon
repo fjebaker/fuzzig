@@ -1,10 +1,11 @@
 .{
-    .name = "fuzzig",
-    .version = "0.1.0",
+    .name = .fuzzig,
+    .fingerprint = 0x6450ab308a312d26,
+    .version = "0.1.1",
     .dependencies = .{
         .zg = .{
-            .url = "https://codeberg.org/dude_the_builder/zg/archive/v0.13.2.tar.gz",
-            .hash = "122055beff332830a391e9895c044d33b15ea21063779557024b46169fb1984c6e40",
+            .url = "https://codeberg.org/dude_the_builder/zg/archive/v0.15.4.tar.gz",
+            .hash = "zg-0.15.3-oGqU3P5ItAJHmwDLfzX6sg6Xc5MhSJU2TctHfWu_sKLv",
         },
     },
     .paths = .{
